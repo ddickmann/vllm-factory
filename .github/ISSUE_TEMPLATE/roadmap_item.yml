@@ -1,0 +1,26 @@
+name: Roadmap Item
+description: Propose or track a roadmap-level enhancement.
+title: "[ROADMAP] "
+labels: ["roadmap"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user or maintainer pain does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: High-level implementation approach.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete checklist for completion.
+    validations:
+      required: true

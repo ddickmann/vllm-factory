@@ -1,0 +1,59 @@
+{
+  "model": "VAGOsolutions/SauerkrautLM-Multi-ModernColBERT",
+  "min_cosine": 0.99,
+  "queries": [
+    {
+      "idx": 0,
+      "name": "query_0",
+      "cosine": 0.9999873638153076
+    },
+    {
+      "idx": 1,
+      "name": "query_1",
+      "cosine": 0.9999756217002869
+    },
+    {
+      "idx": 2,
+      "name": "query_2",
+      "cosine": 0.9999844431877136
+    },
+    {
+      "idx": 3,
+      "name": "query_3",
+      "cosine": 0.9999812841415405
+    },
+    {
+      "idx": 4,
+      "name": "query_4",
+      "cosine": 0.9999756217002869
+    }
+  ],
+  "documents": [
+    {
+      "idx": 0,
+      "name": "doc_0",
+      "cosine": 0.9999911785125732
+    },
+    {
+      "idx": 1,
+      "name": "doc_1",
+      "cosine": 0.9999884366989136
+    },
+    {
+      "idx": 2,
+      "name": "doc_2",
+      "cosine": 0.9999890923500061
+    },
+    {
+      "idx": 3,
+      "name": "doc_3",
+      "cosine": 0.9999892115592957
+    },
+    {
+      "idx": 4,
+      "name": "doc_4",
+      "cosine": 0.9999896287918091
+    }
+  ],
+  "passed": true
+}

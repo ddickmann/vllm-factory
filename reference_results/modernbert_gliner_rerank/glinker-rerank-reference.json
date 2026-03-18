@@ -1,0 +1,58 @@
+{
+  "text": "Farnese Palace is one of the most important palaces in the city of Rome. It was designed by Antonio da Sangallo the Younger in 1517 for the Farnese family. Michelangelo also contributed to its design. Today it serves as the French Embassy in Italy.",
+  "labels": [
+    "person",
+    "building",
+    "city",
+    "country",
+    "family"
+  ],
+  "threshold": 0.3,
+  "entities": [
+    {
+      "text": "Farnese Palace",
+      "label": "building",
+      "start": 0,
+      "end": 14,
+      "score": 0.914062
+    },
+    {
+      "text": "Rome",
+      "label": "city",
+      "start": 67,
+      "end": 71,
+      "score": 0.996094
+    },
+    {
+      "text": "Antonio da Sangallo the Younger",
+      "label": "person",
+      "start": 92,
+      "end": 123,
+      "score": 0.605469
+    },
+    {
+      "text": "Farnese family",
+      "label": "family",
+      "start": 140,
+      "end": 154,
+      "score": 0.921875
+    },
+    {
+      "text": "French",
+      "label": "country",
+      "start": 224,
+      "end": 230,
+      "score": 0.335938
+    },
+    {
+      "text": "Italy",
+      "label": "country",
+      "start": 242,
+      "end": 247,
+      "score": 1.0
+    }
+  ],
+  "source": "vanilla_gliner_reranker_model_bf16",
+  "model": "knowledgator/gliner-linker-rerank-v1.0",
+  "dtype": "bfloat16"
+}

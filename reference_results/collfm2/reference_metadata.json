@@ -1,0 +1,86 @@
+{
+  "model": "VAGOsolutions/SauerkrautLM-ColLFM2-450M-v0.1",
+  "queries": [
+    "What is machine learning?",
+    "How does attention work in transformers?",
+    "Explain the difference between precision and recall in information retrieval.",
+    "What are the key features of this document?",
+    "Find sections related to financial statements.",
+    "What is the main conclusion of this research paper?",
+    "Describe the methodology used in this study.",
+    "What data sources were used?",
+    "Who are the authors?",
+    "What year was this published?"
+  ],
+  "n_queries": 10,
+  "n_images": 3,
+  "query_embed_shapes": [
+    [
+      6,
+      128
+    ],
+    [
+      9,
+      128
+    ],
+    [
+      13,
+      128
+    ],
+    [
+      10,
+      128
+    ],
+    [
+      8,
+      128
+    ],
+    [
+      11,
+      128
+    ],
+    [
+      10,
+      128
+    ],
+    [
+      7,
+      128
+    ],
+    [
+      6,
+      128
+    ],
+    [
+      7,
+      128
+    ]
+  ],
+  "image_embed_shapes": [
+    [
+      245,
+      128
+    ],
+    [
+      245,
+      128
+    ],
+    [
+      245,
+      128
+    ]
+  ],
+  "reference_throughput": {
+    "req_s": 78.53,
+    "p50_ms": 12.7,
+    "p95_ms": 12.8,
+    "p99_ms": 14.4,
+    "n_runs": 50,
+    "device": "cuda"
+  },
+  "preprocessing": {
+    "query": "process_queries(texts) \u2014 direct tokenization, NO prefix, padding=longest, max_length=2048",
+    "image": "process_images(images) \u2014 VISUAL_PROMPT_PREFIX='<|im_start|>user\\n<image>Describe the image.<|im_end|>'",
+    "note": "Uses sauerkrautlm_colpali.ColLFM2 + ColLFM2Processor"
+  }
+}

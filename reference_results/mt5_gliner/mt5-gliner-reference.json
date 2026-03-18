@@ -1,0 +1,82 @@
+{
+  "entities": [
+    {
+      "start": 0,
+      "end": 35,
+      "text": "Cristiano Ronaldo dos Santos Aveiro",
+      "label": "person",
+      "score": 0.8615670800209045
+    },
+    {
+      "start": 41,
+      "end": 56,
+      "text": "5 February 1985",
+      "label": "date",
+      "score": 0.8824593424797058
+    },
+    {
+      "start": 142,
+      "end": 158,
+      "text": "Saudi Pro League",
+      "label": "teams",
+      "score": 0.6415004730224609
+    },
+    {
+      "start": 164,
+      "end": 172,
+      "text": "Al Nassr",
+      "label": "teams",
+      "score": 0.8912739753723145
+    },
+    {
+      "start": 181,
+      "end": 203,
+      "text": "Portugal national team",
+      "label": "teams",
+      "score": 0.7036440372467041
+    },
+    {
+      "start": 286,
+      "end": 297,
+      "text": "Ballon d Or",
+      "label": "award",
+      "score": 0.782040536403656
+    },
+    {
+      "start": 321,
+      "end": 355,
+      "text": "UEFA Men Player of the Year Awards",
+      "label": "award",
+      "score": 0.6905406713485718
+    },
+    {
+      "start": 366,
+      "end": 387,
+      "text": "European Golden Shoes",
+      "label": "award",
+      "score": 0.7294677495956421
+    },
+    {
+      "start": 463,
+      "end": 485,
+      "text": "UEFA Champions Leagues",
+      "label": "competitions",
+      "score": 0.8300851583480835
+    },
+    {
+      "start": 491,
+      "end": 517,
+      "text": "UEFA European Championship",
+      "label": "competitions",
+      "score": 0.8341168165206909
+    },
+    {
+      "start": 526,
+      "end": 545,
+      "text": "UEFA Nations League",
+      "label": "competitions",
+      "score": 0.8091944456100464
+    }
+  ],
+  "latency": 43.39830670505762
+}

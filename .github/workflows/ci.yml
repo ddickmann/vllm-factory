@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lightweight CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ruff>=0.4" "pytest>=7.0" "packaging>=24.0" "build"
+
+      - name: Lint
+        run: ruff check forge/ plugins/ kernels/ poolers/ tests/ --select E,F,I,W --ignore E501
+
+      - name: Format check
+        run: ruff format --check forge/ plugins/ tests/
+
+      - name: Import and syntax smoke checks
+        run: |
+          python -m compileall forge models poolers kernels plugins tests
+          python -c "import importlib; importlib.import_module('forge.patches.pooling_extra_kwargs'); print('patch_import_ok')"
+
+      - name: Plugin import smoke test
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu -q
+          pip install vllm -q || true
+          pip install -e . -q
+          for d in plugins/*/; do
+            plugin=$(basename "$d")
+            if [ -f "$d/setup.py" ]; then
+              pip install -e "$d" -q 2>/dev/null || true
+            fi
+          done
+          python -c "
+          import importlib, sys
+          plugins = [
+              'plugins.embeddinggemma', 'plugins.deberta_gliner', 'plugins.deberta_gliner2',
+              'plugins.deberta_gliner_linker', 'plugins.mmbert_gliner', 'plugins.mt5_gliner',
+              'plugins.moderncolbert', 'plugins.colqwen3', 'plugins.collfm2',
+              'plugins.nemotron_colembed', 'plugins.lfm2_colbert',
+              'plugins.modernbert_gliner_rerank',
+          ]
+          for p in plugins:
+              try:
+                  importlib.import_module(p)
+                  print(f'  OK  {p}')
+              except Exception as e:
+                  print(f'  WARN {p}: {e}')
+          print('Plugin import smoke test done')
+          "
+
+      - name: Build check (sdist + wheel)
+        run: python -m build --sdist --wheel
+
+      - name: Run CPU-safe tests
+        run: pytest -q tests

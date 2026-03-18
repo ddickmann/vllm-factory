@@ -1,0 +1,320 @@
+"""
+GLiNER2 Parity Test — fastino/gliner2-large-v1
+
+Two-phase design:
+    Phase 1 (--prepare): GLiNER2 reference + model dir preparation
+    Phase 2 (--test):    vLLM inference + parity comparison
+
+Usage:
+    python plugins/gliner2/parity_test.py --prepare
+    python plugins/gliner2/parity_test.py --test
+    python plugins/gliner2/parity_test.py           # both in sequence
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+MODEL = "fastino/gliner2-large-v1"
+LOCAL_MODEL_DIR = "/tmp/gliner2-vllm"
+REF_FILE = "/tmp/gliner2-reference.json"
+
+TEXT = (
+    "John Smith works at NVIDIA Corporation in Santa Clara, California. "
+    "His email is john.smith@nvidia.com and phone number is 555-123-4567. "
+    "He is the VP of AI Research and reports to Jensen Huang."
+)
+
+ENTITY_LABELS = ["person", "organization", "location", "email", "phone_number"]
+THRESHOLD = 0.5
+
+
+# ======================================================================
+# Phase 1: Generate references + model dir
+# ======================================================================
+
+def phase_prepare():
+    import safetensors.torch
+    from gliner2 import GLiNER2
+
+    print("=" * 60)
+    print("PHASE 1: GLiNER2 Reference + Model Directory")
+    print("=" * 60)
+
+    model = GLiNER2.from_pretrained(MODEL)
+    model.eval()
+
+    # Generate entity reference
+    entities = model.extract_entities(
+        TEXT, ENTITY_LABELS, threshold=THRESHOLD,
+        include_confidence=True, include_spans=True,
+    )
+
+    # Generate classification reference
+    classification = model.classify_text(
+        TEXT,
+        {"topic": {"labels": ["technology", "finance", "sports", "healthcare"], "multi_label": False}},
+        include_confidence=True,
+    )
+
+    # Generate relation reference
+    relations = model.extract_relations(
+        TEXT, ["works_at", "reports_to"], threshold=0.3,
+        include_confidence=True,
+    )
+
+    # Generate JSON structure reference
+    json_result = model.extract_json(
+        TEXT,
+        {"employee": ["name::str", "title::str", "company::str", "location::str", "email::str"]},
+        threshold=0.3, include_confidence=True,
+    )
+
+    print("\n--- Entity Results ---")
+    print(json.dumps(entities, indent=2, default=str))
+    print("\n--- Classification Results ---")
+    print(json.dumps(classification, indent=2, default=str))
+    print("\n--- Relation Results ---")
+    print(json.dumps(relations, indent=2, default=str))
+    print("\n--- JSON Results ---")
+    print(json.dumps(json_result, indent=2, default=str))
+
+    # Save references
+    refs = {
+        "model": MODEL, "text": TEXT,
+        "entities": entities, "classification": classification,
+        "relations": relations, "json_structure": json_result,
+    }
+    with open(REF_FILE, "w") as f:
+        json.dump(refs, f, indent=2, default=str)
+    print(f"\nSaved references to {REF_FILE}")
+
+    # Prepare vLLM model dir
+    ec = model.encoder.config
+    vllm_config = {
+        "model_type": "gliner2",
+        "architectures": ["GLiNER2VLLMModel"],
+        "num_hidden_layers": 0,
+        "num_attention_heads": 1,
+        "hidden_size": ec.hidden_size,
+        "encoder_model_name": model.config.model_name,
+        "vocab_size": len(model.processor.tokenizer),
+        "encoder_hidden_size": ec.hidden_size,
+        "encoder_num_hidden_layers": ec.num_hidden_layers,
+        "encoder_num_attention_heads": ec.num_attention_heads,
+        "encoder_intermediate_size": ec.intermediate_size,
+        "encoder_hidden_act": ec.hidden_act,
+        "encoder_hidden_dropout_prob": 0.0,
+        "encoder_attention_probs_dropout_prob": 0.0,
+        "encoder_max_position_embeddings": ec.max_position_embeddings,
+        "encoder_type_vocab_size": ec.type_vocab_size,
+        "encoder_layer_norm_eps": ec.layer_norm_eps,
+        "encoder_relative_attention": ec.relative_attention,
+        "encoder_max_relative_positions": ec.max_relative_positions,
+        "encoder_position_buckets": ec.position_buckets,
+        "encoder_pos_att_type": ec.pos_att_type,
+        "encoder_share_att_key": ec.share_att_key,
+        "encoder_norm_rel_ebd": ec.norm_rel_ebd,
+        "encoder_position_biased_input": ec.position_biased_input,
+        "encoder_pad_token_id": ec.pad_token_id,
+        "max_width": model.config.max_width,
+        "counting_layer": model.config.counting_layer,
+        "token_pooling": model.config.token_pooling,
+    }
+
+    os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
+    with open(os.path.join(LOCAL_MODEL_DIR, "config.json"), "w") as f:
+        json.dump(vllm_config, f, indent=2)
+
+    # Save weights
+    state = model.state_dict()
+    deduped = {}
+    seen = set()
+    for k, v in state.items():
+        ptr = v.data_ptr()
+        if ptr not in seen:
+            deduped[k] = v.contiguous().cpu()
+            seen.add(ptr)
+        else:
+            deduped[k] = v.clone().contiguous().cpu()
+    safetensors.torch.save_file(deduped, os.path.join(LOCAL_MODEL_DIR, "model.safetensors"))
+
+    # Save tokenizer
+    model.processor.tokenizer.save_pretrained(LOCAL_MODEL_DIR)
+    print(f"Model dir: {LOCAL_MODEL_DIR} ({len(deduped)} weights)")
+    print("✅ Phase 1 complete\n")
+
+
+# ======================================================================
+# Phase 2: vLLM inference + parity comparison
+# ======================================================================
+
+def phase_test():
+    from transformers import AutoTokenizer
+    from vllm import LLM, PoolingParams
+    from vllm.inputs import TokensPrompt
+
+    from deberta_gliner2.processor import (
+        build_schema_for_classification,
+        build_schema_for_entities,
+        build_schema_for_json,
+        build_schema_for_relations,
+        decode_output,
+        format_results,
+        preprocess,
+    )
+
+    print("=" * 60)
+    print("PHASE 2: vLLM Inference + Parity")
+    print("=" * 60)
+
+    # Load references
+    with open(REF_FILE) as f:
+        ref = json.load(f)
+
+    tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_DIR)
+
+    # ---- TEST 1: Entity Extraction ----
+    print("\n--- TEST 1: Entity Extraction ---")
+    schema = build_schema_for_entities(ENTITY_LABELS)
+    prep = preprocess(tokenizer, TEXT, schema)
+
+    vllm_model = LLM(
+        model=LOCAL_MODEL_DIR,
+        trust_remote_code=True,
+        enforce_eager=True,
+        dtype="bfloat16",
+        enable_prefix_caching=False,
+    )
+
+    prompt = TokensPrompt(prompt_token_ids=prep["input_ids"])
+    pooling_params = PoolingParams(extra_kwargs=prep)
+
+    # Warmup
+    _ = vllm_model.embed([prompt], pooling_params=pooling_params)
+
+    # Timed run
+    N = 5
+    t0 = time.perf_counter()
+    for _ in range(N):
+        outputs = vllm_model.embed([prompt], pooling_params=pooling_params)
+    latency = (time.perf_counter() - t0) / N * 1000
+
+    raw = outputs[0].outputs.embedding
+    result = decode_output(raw, schema)
+    formatted = format_results(result, include_confidence=True)
+    print(f"vLLM output: {json.dumps(formatted, indent=2, default=str)}")
+    print(f"Latency: {latency:.1f}ms")
+
+    # Compare entities
+    ref_entities = ref.get("entities", {}).get("entities", {})
+    vllm_entities = formatted.get("entities", {})
+
+    ref_set = set()
+    for etype, elist in ref_entities.items():
+        for e in (elist if isinstance(elist, list) else [elist]):
+            if isinstance(e, dict):
+                ref_set.add((e.get("text", e), etype))
+            else:
+                ref_set.add((e, etype))
+
+    vllm_set = set()
+    for etype, elist in vllm_entities.items():
+        for e in (elist if isinstance(elist, list) else [elist]):
+            if isinstance(e, dict):
+                vllm_set.add((e.get("text", e), etype))
+            else:
+                vllm_set.add((e, etype))
+
+    matched = ref_set & vllm_set
+    if ref_set:
+        recall = len(matched) / len(ref_set)
+    else:
+        recall = 1.0
+    if vllm_set:
+        precision = len(matched) / len(vllm_set)
+    else:
+        precision = 1.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+    print(f"\nEntity Parity: P={precision:.4f} R={recall:.4f} F1={f1:.4f}")
+    print(f"Reference: {len(ref_set)}, vLLM: {len(vllm_set)}, Matched: {len(matched)}")
+    if ref_set - vllm_set:
+        print(f"  Missing: {ref_set - vllm_set}")
+    if vllm_set - ref_set:
+        print(f"  Extra:   {vllm_set - ref_set}")
+
+    # ---- TEST 2: Classification ----
+    print("\n--- TEST 2: Classification ---")
+    cls_schema = build_schema_for_classification({
+        "topic": {"labels": ["technology", "finance", "sports", "healthcare"]},
+    })
+    cls_prep = preprocess(tokenizer, TEXT, cls_schema)
+    cls_prompt = TokensPrompt(prompt_token_ids=cls_prep["input_ids"])
+    cls_pp = PoolingParams(extra_kwargs=cls_prep)
+    cls_out = vllm_model.embed([cls_prompt], pooling_params=cls_pp)
+    cls_result = decode_output(cls_out[0].outputs.embedding, cls_schema)
+    cls_formatted = format_results(cls_result, include_confidence=True)
+    print(f"vLLM: {json.dumps(cls_formatted, indent=2, default=str)}")
+
+    ref_cls = ref.get("classification", {})
+    ref_label = ref_cls.get("topic", {}).get("label", "") if isinstance(ref_cls.get("topic"), dict) else ref_cls.get("topic", "")
+    vllm_label = cls_formatted.get("topic", {}).get("label", "") if isinstance(cls_formatted.get("topic"), dict) else cls_formatted.get("topic", "")
+    cls_match = ref_label == vllm_label
+    print(f"Classification Parity: ref={ref_label}, vllm={vllm_label}, match={cls_match}")
+
+    # ---- TEST 3: Relations ----
+    print("\n--- TEST 3: Relation Extraction ---")
+    rel_schema = build_schema_for_relations(["works_at", "reports_to"])
+    rel_prep = preprocess(tokenizer, TEXT, rel_schema)
+    rel_prompt = TokensPrompt(prompt_token_ids=rel_prep["input_ids"])
+    rel_pp = PoolingParams(extra_kwargs=rel_prep)
+    rel_out = vllm_model.embed([rel_prompt], pooling_params=rel_pp)
+    rel_result = decode_output(rel_out[0].outputs.embedding, rel_schema)
+    rel_formatted = format_results(rel_result, include_confidence=True)
+    print(f"vLLM: {json.dumps(rel_formatted, indent=2, default=str)}")
+
+    # ---- TEST 4: JSON Structure ----
+    print("\n--- TEST 4: JSON Structure ---")
+    json_schema = build_schema_for_json({
+        "employee": ["name", "title", "company", "location", "email"],
+    })
+    json_prep = preprocess(tokenizer, TEXT, json_schema)
+    json_prompt = TokensPrompt(prompt_token_ids=json_prep["input_ids"])
+    json_pp = PoolingParams(extra_kwargs=json_prep)
+    json_out = vllm_model.embed([json_prompt], pooling_params=json_pp)
+    json_result = decode_output(json_out[0].outputs.embedding, json_schema)
+    json_formatted = format_results(json_result, include_confidence=True)
+    print(f"vLLM: {json.dumps(json_formatted, indent=2, default=str)}")
+
+    # Final summary
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    print(f"Entity F1:      {f1:.4f}")
+    print(f"Classification: {'✅' if cls_match else '❌'}")
+    print(f"Latency:        {latency:.1f}ms")
+    status = "✅ PARITY OK" if f1 >= 0.8 and cls_match else "⚠️  NEEDS WORK"
+    print(status)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="GLiNER2 Parity Test")
+    parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--test", action="store_true")
+    args = parser.parse_args()
+
+    if args.prepare:
+        phase_prepare()
+    elif args.test:
+        phase_test()
+    else:
+        print("Running both phases in separate processes...\n")
+        r1 = subprocess.run([sys.executable, __file__, "--prepare"], cwd=os.getcwd())
+        if r1.returncode != 0:
+            sys.exit(r1.returncode)
+        r2 = subprocess.run([sys.executable, __file__, "--test"], cwd=os.getcwd())
+        sys.exit(r2.returncode)

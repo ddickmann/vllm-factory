@@ -1,0 +1,72 @@
+{
+  "entities": [
+    {
+      "start": 15,
+      "end": 19,
+      "text": "John",
+      "label": "person",
+      "score": 1.0
+    },
+    {
+      "start": 20,
+      "end": 25,
+      "text": "Smith",
+      "label": "person",
+      "score": 0.89453125
+    },
+    {
+      "start": 29,
+      "end": 33,
+      "text": "john",
+      "label": "person",
+      "score": 1.0
+    },
+    {
+      "start": 34,
+      "end": 39,
+      "text": "smith",
+      "label": "person",
+      "score": 0.9609375
+    },
+    {
+      "start": 60,
+      "end": 72,
+      "text": "555-123-4567",
+      "label": "phone_number",
+      "score": 1.0
+    },
+    {
+      "start": 86,
+      "end": 126,
+      "text": "123 Main Street, San Francisco, CA 94105",
+      "label": "address",
+      "score": 1.0
+    },
+    {
+      "start": 214,
+      "end": 218,
+      "text": "John",
+      "label": "person",
+      "score": 1.0
+    },
+    {
+      "start": 228,
+      "end": 246,
+      "text": "NVIDIA Corporation",
+      "label": "organization",
+      "score": 1.0
+    }
+  ],
+  "text": "Please contact John Smith at john.smith@example.com or call 555-123-4567. He lives at 123 Main Street, San Francisco, CA 94105. His social security number is 123-45-6789 and his credit card is 4532-1234-5678-9012. John works at NVIDIA Corporation in the AI research department.",
+  "labels": [
+    "person",
+    "email",
+    "phone_number",
+    "address",
+    "organization"
+  ],
+  "threshold": 0.3,
+  "source": "vanilla_gliner_bf16",
+  "model": "nvidia/gliner-PII",
+  "dtype": "bfloat16"
+}

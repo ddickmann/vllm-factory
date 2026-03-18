@@ -1,0 +1,63 @@
+name: Bug Report
+description: Report a bug or unexpected behavior.
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin
+      description: Which plugin is affected?
+      placeholder: e.g. mmbert_gliner, colqwen3, embeddinggemma
+    validations:
+      required: true
+  - type: input
+    id: vllm_version
+    attributes:
+      label: vLLM version
+      placeholder: e.g. 0.15.1
+    validations:
+      required: true
+  - type: input
+    id: vllm_factory_version
+    attributes:
+      label: vllm-factory version
+      placeholder: e.g. 0.1.0 (pip show vllm-factory)
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands or code to reproduce the issue.
+      placeholder: |
+        1. pip install ...
+        2. vllm serve ...
+        3. curl ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error messages, tracebacks, or unexpected output.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: GPU, OS, CUDA version, torch version.
+      placeholder: |
+        GPU: NVIDIA A100 80GB
+        OS: Ubuntu 22.04
+        CUDA: 12.4
+        torch: 2.5.1
+    validations:
+      required: false

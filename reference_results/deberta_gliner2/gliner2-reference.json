@@ -1,0 +1,120 @@
+{
+  "model": "fastino/gliner2-large-v1",
+  "text": "John Smith works at NVIDIA Corporation in Santa Clara, California. His email is john.smith@nvidia.com and phone number is 555-123-4567. He is the VP of AI Research and reports to Jensen Huang.",
+  "entities": {
+    "entities": {
+      "person": [
+        {
+          "text": "Jensen Huang",
+          "confidence": 0.9997748732566833,
+          "start": 179,
+          "end": 191
+        },
+        {
+          "text": "John Smith",
+          "confidence": 0.9974990487098694,
+          "start": 0,
+          "end": 10
+        }
+      ],
+      "organization": [
+        {
+          "text": "NVIDIA Corporation",
+          "confidence": 0.9989621639251709,
+          "start": 20,
+          "end": 38
+        }
+      ],
+      "location": [
+        {
+          "text": "Santa Clara",
+          "confidence": 0.9903500080108643,
+          "start": 42,
+          "end": 53
+        },
+        {
+          "text": "California",
+          "confidence": 0.9837775230407715,
+          "start": 55,
+          "end": 65
+        }
+      ],
+      "email": [
+        {
+          "text": "john.smith@nvidia.com",
+          "confidence": 0.999997615814209,
+          "start": 80,
+          "end": 101
+        }
+      ],
+      "phone_number": [
+        {
+          "text": "555-123-4567",
+          "confidence": 0.9999979734420776,
+          "start": 122,
+          "end": 134
+        }
+      ]
+    }
+  },
+  "classification": {
+    "topic": {
+      "label": "technology",
+      "confidence": 1.0
+    }
+  },
+  "relations": {
+    "relation_extraction": {
+      "works_at": [
+        {
+          "head": {
+            "text": "John Smith",
+            "confidence": 1.0
+          },
+          "tail": {
+            "text": "NVIDIA Corporation",
+            "confidence": 0.9999932050704956
+          }
+        }
+      ],
+      "reports_to": [
+        {
+          "head": {
+            "text": "John Smith",
+            "confidence": 1.0
+          },
+          "tail": {
+            "text": "Jensen Huang",
+            "confidence": 0.9998600482940674
+          }
+        }
+      ]
+    }
+  },
+  "json_structure": {
+    "employee": [
+      {
+        "name": {
+          "text": "John Smith",
+          "confidence": 0.9999939203262329
+        },
+        "title": {
+          "text": "VP of AI Research",
+          "confidence": 0.997703492641449
+        },
+        "company": {
+          "text": "NVIDIA Corporation",
+          "confidence": 0.999998927116394
+        },
+        "location": {
+          "text": "Santa Clara, California",
+          "confidence": 0.9999293088912964
+        },
+        "email": {
+          "text": "john.smith@nvidia.com",
+          "confidence": 0.9999996423721313
+        }
+      }
+    ]
+  }
+}

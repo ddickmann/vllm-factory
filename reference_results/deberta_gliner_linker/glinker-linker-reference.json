@@ -1,0 +1,37 @@
+{
+  "entities": [
+    {
+      "text": "Apple",
+      "label": "company",
+      "start": 0,
+      "end": 5,
+      "linked_entity_id": "Q1",
+      "linked_label": "Apple",
+      "linked_score": 0.9803431630134583
+    },
+    {
+      "text": "Michael Jordan",
+      "label": "person",
+      "start": 44,
+      "end": 58,
+      "linked_entity_id": "Q3",
+      "linked_label": "Michael Jordan",
+      "linked_score": 0.9679580330848694
+    },
+    {
+      "text": "California",
+      "label": "location",
+      "start": 32,
+      "end": 42,
+      "linked_entity_id": "Q2",
+      "linked_label": "California",
+      "linked_score": 0.949877142906189
+    }
+  ],
+  "text": "Apple announced new products in California. Michael Jordan joined the team.",
+  "labels": [
+    "person",
+    "company",
+    "location"
+  ]
+}

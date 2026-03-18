@@ -1,0 +1,19 @@
+# Reference / vanilla implementation dependencies.
+# These CONFLICT with vllm and must be installed in a separate venv.
+#
+# Usage:
+#   bash scripts/create_reference_venv.sh
+#
+torch>=2.0
+transformers>=4.40
+safetensors
+numpy
+Pillow
+huggingface-hub
+
+# Vanilla reference packages (conflict with vllm==0.15.x)
+gliner
+gliner2
+pylate
+git+https://github.com/VAGOsolutions/sauerkrautlm-colpali
+sentence-transformers

@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.so
+.venv/
+.venv-reference/
+venv/
+.env
+*.pt
+*.bin
+*.safetensors
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.log
+
+# Auto-generated model cache dirs
+_model_cache/
+
+# Dev artifacts (created by scripts, not committed)
+check_*.py
+debug_*.py
