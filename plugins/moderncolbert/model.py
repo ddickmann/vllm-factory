@@ -12,6 +12,7 @@ vLLM 0.15.x compatible:
 """
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
@@ -40,12 +41,15 @@ _modernbert_encoder_mod = _import_modernbert_encoder()
 ModernBertModel = _modernbert_encoder_mod.ModernBertModel
 
 from vllm.config import VllmConfig  # noqa: E402
-from vllm.model_executor.layers.pooler.tokwise import pooler_for_token_embed  # noqa: E402
+from vllm_factory.pooling.protocol import PassthroughPooler  # noqa: E402
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter  # noqa: E402
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader  # noqa: E402
 from vllm.model_executor.models.interfaces_base import attn_type, default_pooling_type  # noqa: E402
 from vllm.sequence import IntermediateTensors  # noqa: E402
 
 from .config import ModernColBERTConfig  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 @attn_type("encoder_only")
@@ -65,7 +69,6 @@ class ModernBertForColBERT(nn.Module):
         super().__init__()
 
         config = vllm_config.model_config.hf_config
-        pooler_config = vllm_config.model_config.pooler_config
 
         # Ensure ColBERT parameters exist on config
         if not isinstance(config, ModernColBERTConfig):
@@ -92,12 +95,10 @@ class ModernBertForColBERT(nn.Module):
         )
 
         # 3. vLLM pooler for token-level embedding task
-        if pooler_config is not None:
-            self.pooler = pooler_for_token_embed(pooler_config)
-        else:
-            from vllm.config import PoolerConfig
-
-            self.pooler = pooler_for_token_embed(PoolerConfig(pooling_type="ALL"))
+        self.pooler = VllmPoolerAdapter(
+            PassthroughPooler(),
+            pooler_config=vllm_config.model_config.pooler_config,
+        )
 
         self._projection_loaded = False
 
@@ -209,6 +210,9 @@ class ModernBertForColBERT(nn.Module):
                 loaded.add("colbert_linear.weight")
 
         self._projection_loaded = True
+        # Mark constructor-initialized params as loaded for vLLM 0.19+ validation
+        for name in dict(self.named_parameters()):
+            loaded.add(name)
         return loaded
 
     def _ensure_projection_loaded(self):
@@ -242,14 +246,18 @@ class ModernBertForColBERT(nn.Module):
                     )
                 )
             except Exception as e:
-                print(f"[ModernColBERT] Could not locate 1_Dense/model.safetensors: {e}")
+                logger.warning(
+                    "Could not locate 1_Dense/model.safetensors: %s", e
+                )
                 return False
 
         if not dense_file.exists():
-            print(f"[ModernColBERT] 1_Dense/model.safetensors not found at {dense_file}")
+            logger.warning(
+                "1_Dense/model.safetensors not found at %s", dense_file
+            )
             return False
 
-        print(f"[ModernColBERT] Loading ColBERT projection from {dense_file}")
+        logger.info("Loading ColBERT projection from %s", dense_file)
         loaded_ok = False
         with safe_open(str(dense_file), framework="pt", device="cpu") as f:
             for key in f.keys():
@@ -258,6 +266,8 @@ class ModernBertForColBERT(nn.Module):
                     "weight" in key.lower() or tensor.dim() == 2
                 ) and self.colbert_linear.weight.shape == tensor.shape:
                     self.colbert_linear.weight.data.copy_(tensor)
-                    print(f"[ModernColBERT] ✓ colbert_linear.weight loaded: {tensor.shape}")
+                    logger.info(
+                        "colbert_linear.weight loaded: %s", tensor.shape
+                    )
                     loaded_ok = True
         return loaded_ok

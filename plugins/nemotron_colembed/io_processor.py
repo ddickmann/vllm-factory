@@ -22,11 +22,11 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
-from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
-from vllm.inputs.data import PromptType
-from vllm.outputs import PoolingRequestOutput
-from vllm.plugins.io_processors.interface import IOProcessor
-from vllm.pooling_params import PoolingParams
+from vllm_factory.io.base import (
+    FactoryIOProcessor,
+    PoolingRequestOutput,
+    PromptType,
+)
 
 
 @dataclass
@@ -38,21 +38,22 @@ class NemotronColEmbedInput:
     is_query: bool = True
 
 
-class NemotronColEmbedIOProcessor(IOProcessor[NemotronColEmbedInput, list[float]]):
+class NemotronColEmbedIOProcessor(FactoryIOProcessor):
     """IOProcessor for NemotronColEmbed — nvidia/nemotron-colembed-vl-4b-v2.
 
     Data flow:
         IOProcessorRequest(data={text or image, is_query})
-        → parse_request → NemotronColEmbedInput
-        → pre_process   → formatted prompt string (+ multi_modal_data for images)
-        → validate_or_generate_params → PoolingParams(task="token_embed")
-        → engine.encode  → PoolingRequestOutput
-        → post_process   → list[float] (flattened multi-vector embeddings)
-        → output_to_response → IOProcessorResponse(data=[...])
+        → factory_parse        → NemotronColEmbedInput
+        → factory_pre_process  → formatted prompt string (+ multi_modal_data for images)
+        → merge_pooling_params → PoolingParams(task="plugin")
+        → engine.encode        → PoolingRequestOutput
+        → factory_post_process → base64-encoded flattened multi-vector embeddings
     """
 
-    def __init__(self, vllm_config: VllmConfig):
-        super().__init__(vllm_config)
+    pooling_task = "token_embed"
+
+    def __init__(self, vllm_config: VllmConfig, *args, **kwargs):
+        super().__init__(vllm_config, *args, **kwargs)
         from transformers import AutoProcessor
 
         model_name = vllm_config.model_config.model
@@ -63,13 +64,11 @@ class NemotronColEmbedIOProcessor(IOProcessor[NemotronColEmbedInput, list[float]
         self.query_prefix = "query: "
         self.passage_prefix = "passage: "
 
-    def parse_request(self, request: Any) -> NemotronColEmbedInput:
-        if hasattr(request, "data"):
-            data = request.data
-        elif isinstance(request, dict) and "data" in request:
-            data = request["data"]
-        else:
-            data = request
+    def factory_parse(self, data: Any) -> NemotronColEmbedInput:
+        if hasattr(data, "data"):
+            data = data.data
+        elif isinstance(data, dict) and "data" in data:
+            data = data["data"]
 
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict with 'text' or 'image' key, got {type(data)}")
@@ -107,14 +106,13 @@ class NemotronColEmbedIOProcessor(IOProcessor[NemotronColEmbedInput, list[float]
 
         raise ValueError(f"Unsupported image source type: {type(source)}")
 
-    def pre_process(
+    def factory_pre_process(
         self,
-        prompt: NemotronColEmbedInput,
-        request_id: str | None = None,
-        **kwargs,
+        parsed_input: NemotronColEmbedInput,
+        request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
-        if prompt.text is not None:
-            prefixed = f"{self.query_prefix}{prompt.text}"
+        if parsed_input.text is not None:
+            prefixed = f"{self.query_prefix}{parsed_input.text}"
             message = [
                 {
                     "role": "user",
@@ -130,7 +128,7 @@ class NemotronColEmbedIOProcessor(IOProcessor[NemotronColEmbedInput, list[float]
             )
             return formatted
 
-        image = self._load_image(prompt.image)
+        image = self._load_image(parsed_input.image)
         passage_text = f"{self.passage_prefix}"
         message = [
             {
@@ -152,21 +150,10 @@ class NemotronColEmbedIOProcessor(IOProcessor[NemotronColEmbedInput, list[float]
             "multi_modal_data": {"image": image},
         }
 
-    def validate_or_generate_params(
-        self,
-        params: PoolingParams | None = None,
-    ) -> PoolingParams:
-        if params is not None:
-            if params.task is None:
-                params.task = "token_embed"
-            return params
-        return PoolingParams(task="token_embed")
-
-    def post_process(
+    def factory_post_process(
         self,
         model_output: Sequence[PoolingRequestOutput],
-        request_id: str | None = None,
-        **kwargs,
+        request_meta: Any,
     ) -> str:
         import base64
 
@@ -184,12 +171,6 @@ class NemotronColEmbedIOProcessor(IOProcessor[NemotronColEmbedInput, list[float]
         return base64.b64encode(
             raw.cpu().contiguous().to(torch.float32).numpy().tobytes()
         ).decode("ascii")
-
-    def output_to_response(
-        self,
-        plugin_output: str,
-    ) -> IOProcessorResponse:
-        return IOProcessorResponse(data=plugin_output)
 
 
 def get_processor_cls() -> str:

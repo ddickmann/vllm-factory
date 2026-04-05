@@ -27,12 +27,12 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
-from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
-from vllm.inputs import TokensPrompt
-from vllm.inputs.data import PromptType
-from vllm.outputs import PoolingRequestOutput
-from vllm.plugins.io_processors.interface import IOProcessor
-from vllm.pooling_params import PoolingParams
+from vllm_factory.io.base import (
+    FactoryIOProcessor,
+    PoolingRequestOutput,
+    PromptType,
+    TokensPrompt,
+)
 
 VISUAL_PROMPT_PREFIX = "<|im_start|>user\n<image>Describe the image.<|im_end|>"
 
@@ -46,24 +46,22 @@ class ColLFM2Input:
     metadata: dict = field(default_factory=dict)
 
 
-class ColLFM2IOProcessor(IOProcessor[ColLFM2Input, list[float]]):
+class ColLFM2IOProcessor(FactoryIOProcessor):
     """IOProcessor for ColLFM2 — late-interaction multi-vector embeddings.
 
     Data flow:
         IOProcessorRequest(data={text or image, is_query})
-        → parse_request → ColLFM2Input
-        → pre_process   → TokensPrompt (queries) or dict prompt (images)
-        → validate_or_generate_params → PoolingParams(task="token_embed")
-        → engine.encode  → PoolingRequestOutput
-        → post_process   → list[float] (flattened multi-vector embeddings)
-        → output_to_response → IOProcessorResponse(data=[...])
+        → factory_parse        → ColLFM2Input
+        → factory_pre_process  → TokensPrompt (queries) or dict prompt (images)
+        → merge_pooling_params → PoolingParams(task="plugin")
+        → engine.encode        → PoolingRequestOutput
+        → factory_post_process → base64-encoded flattened multi-vector embeddings
     """
 
-    def __init__(self, vllm_config: VllmConfig):
-        super().__init__(vllm_config)
-        self._lock = threading.Lock()
-        self._pending_extra_kwargs: dict | None = None
-        self._pending_metadata: dict | None = None
+    pooling_task = "token_embed"
+
+    def __init__(self, vllm_config: VllmConfig, *args, **kwargs):
+        super().__init__(vllm_config, *args, **kwargs)
 
         self._model_id = vllm_config.model_config.model
         self._hf_tokenizer = None
@@ -82,13 +80,11 @@ class ColLFM2IOProcessor(IOProcessor[ColLFM2Input, list[float]]):
                     )
                     self._hf_tokenizer = proc.tokenizer if hasattr(proc, "tokenizer") else proc
 
-    def parse_request(self, request: Any) -> ColLFM2Input:
-        if hasattr(request, "data"):
-            data = request.data
-        elif isinstance(request, dict) and "data" in request:
-            data = request["data"]
-        else:
-            data = request
+    def factory_parse(self, data: Any) -> ColLFM2Input:
+        if hasattr(data, "data"):
+            data = data.data
+        elif isinstance(data, dict) and "data" in data:
+            data = data["data"]
 
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict with 'text' or 'image' key, got {type(data)}")
@@ -135,23 +131,19 @@ class ColLFM2IOProcessor(IOProcessor[ColLFM2Input, list[float]]):
                     return PILImage.open(BytesIO(resp.read())).convert("RGB")
             return PILImage.open(source).convert("RGB")
 
-        if isinstance(source, PILImage.Image):
-            return source.convert("RGB")
-
         raise ValueError(f"Unsupported image source type: {type(source)}")
 
-    def pre_process(
+    def factory_pre_process(
         self,
-        prompt: ColLFM2Input,
-        request_id: str | None = None,
-        **kwargs,
+        parsed_input: ColLFM2Input,
+        request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
-        metadata = prompt.metadata
+        metadata = parsed_input.metadata
 
-        if prompt.is_query:
+        if parsed_input.is_query:
             self._ensure_tokenizer()
             batch = self._hf_tokenizer(
-                str(prompt.prompt),
+                str(parsed_input.prompt),
                 return_tensors="pt",
                 padding="longest",
                 return_attention_mask=True,
@@ -160,45 +152,23 @@ class ColLFM2IOProcessor(IOProcessor[ColLFM2Input, list[float]]):
             )
             input_ids = batch["input_ids"][0].tolist()
 
-            with self._lock:
-                self._pending_extra_kwargs = {}
-                self._pending_metadata = metadata
+            self._stash(extra_kwargs={}, request_id=request_id, meta=metadata)
 
             return TokensPrompt(prompt_token_ids=input_ids)
         else:
-            image = self._load_image(prompt.prompt)
+            image = self._load_image(parsed_input.prompt)
 
-            with self._lock:
-                self._pending_extra_kwargs = {}
-                self._pending_metadata = metadata
+            self._stash(extra_kwargs={}, request_id=request_id, meta=metadata)
 
             return {
                 "prompt": VISUAL_PROMPT_PREFIX,
                 "multi_modal_data": {"image": image},
             }
 
-    def validate_or_generate_params(
-        self,
-        params: PoolingParams | None = None,
-    ) -> PoolingParams:
-        with self._lock:
-            extra = self._pending_extra_kwargs
-            self._pending_extra_kwargs = None
-
-        if params is not None:
-            if extra is not None:
-                params.extra_kwargs = extra
-            if params.task is None:
-                params.task = "token_embed"
-            return params
-
-        return PoolingParams(task="token_embed", extra_kwargs=extra or {})
-
-    def post_process(
+    def factory_post_process(
         self,
         model_output: Sequence[PoolingRequestOutput],
-        request_id: str | None = None,
-        **kwargs,
+        request_meta: Any,
     ) -> str:
         import base64
 
@@ -215,23 +185,13 @@ class ColLFM2IOProcessor(IOProcessor[ColLFM2Input, list[float]]):
         else:
             emb = torch.as_tensor(raw)
 
-        with self._lock:
-            metadata = self._pending_metadata
-            self._pending_metadata = None
-
-        is_image = (metadata or {}).get("is_query", True) is False
+        is_image = (request_meta or {}).get("is_query", True) is False
         if is_image and emb.shape[0] > 1:
             emb = emb[1:]
 
         return base64.b64encode(
             emb.cpu().contiguous().to(torch.float32).numpy().tobytes()
         ).decode("ascii")
-
-    def output_to_response(
-        self,
-        plugin_output: str,
-    ) -> IOProcessorResponse:
-        return IOProcessorResponse(data=plugin_output)
 
 
 def get_processor_cls() -> str:

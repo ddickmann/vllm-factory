@@ -162,7 +162,11 @@ def phase_ref():
     # Extract using words_mask
     batch_idx, token_pos = torch.where(words_mask.unsqueeze(0) > 0)
     word_target = (words_mask.unsqueeze(0)[batch_idx, token_pos] - 1).long()
-    word_embs[batch_idx, word_target] = text_hidden[batch_idx, token_pos]
+    # GLiNER bi-encoder checkpoints use subtoken_pooling="first".
+    keep = torch.ones_like(word_target, dtype=torch.bool)
+    if word_target.numel() > 1:
+        keep[1:] = word_target[1:] != word_target[:-1]
+    word_embs[batch_idx[keep], word_target[keep]] = text_hidden[batch_idx[keep], token_pos[keep]]
 
     print(f"Word embeddings shape: {word_embs.shape}")
 
@@ -304,20 +308,25 @@ def phase_test():
         "input_ids": input_ids_ref.tolist(),
         "words_mask": words_mask_ref.tolist(),
         "text_lengths": int(text_lengths_ref[0].item()),
+        "threshold": 0.5,
         "labels_embeds": label_embs_ref.tolist(),  # Pass precomputed label embeddings
     }
 
     prompt = TokensPrompt(prompt_token_ids=input_ids_ref.tolist())
-    pooling_params = PoolingParams(extra_kwargs=gliner_data)
+    pooling_params = PoolingParams(task="plugin", extra_kwargs=gliner_data)
 
     print("\n--- Running vLLM inference ---")
     t0 = time.perf_counter()
-    outputs = llm.embed([prompt], pooling_params=pooling_params)
+    outputs = llm.encode(
+        [prompt],
+        pooling_params=pooling_params,
+        pooling_task="plugin",
+    )
     latency = (time.perf_counter() - t0) * 1000
     print(f"Latency: {latency:.1f}ms")
 
     # Decode output
-    raw = torch.tensor(outputs[0].outputs.embedding)
+    raw = torch.as_tensor(outputs[0].outputs.data)
     print(f"Raw output shape: {raw.shape}")
 
     if raw.numel() < 4:
@@ -328,7 +337,12 @@ def phase_test():
     W = int(raw[0].item())
     C = int(raw[1].item())
     S = int(raw[2].item())
-    vllm_scores = raw[3:].reshape(W, C, S)
+    N = int(raw[3].item()) if raw.numel() > 4 else 0
+    expected = 4 + (W * C * S) + (N * 2) + N + (N * C)
+    if expected == raw.numel():
+        vllm_scores = raw[4 : 4 + (W * C * S)].reshape(W, C, S)
+    else:
+        vllm_scores = raw[3:].reshape(W, C, S)
 
     print(f"vLLM scores shape: {vllm_scores.shape}")
     print(f"Ref scores shape: {ref_scores.shape}")

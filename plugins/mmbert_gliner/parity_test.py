@@ -59,12 +59,11 @@ def run_gliner_reference():
     print("STEP 1: GLiNER Library Reference")
     print("=" * 60)
 
-    # ModernBERT init is extremely slow on CPU (trunc_normal_/erfinv); force GPU.
-    if torch.cuda.is_available():
-        torch.set_default_device("cuda")
-    model = GLiNER.from_pretrained(
-        MODEL, map_location="cuda" if torch.cuda.is_available() else "cpu"
-    )
+    # Load the reference model on GPU when available, but avoid mutating
+    # PyTorch's global default device because GLiNER's collator mixes
+    # freshly-created CPU tensors with model tensors during preprocessing.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = GLiNER.from_pretrained(MODEL, map_location=device)
     model.eval()
 
     # Warmup
@@ -222,26 +221,14 @@ def run_vllm_gliner():
     words_mask = torch.zeros_like(word_ids)
     words_mask[valid_indices] = word_ids[valid_indices] - prompt_len + 1
 
-    # --- 5. Build span_idx and span_mask ---
-    K = MAX_WIDTH
-    starts = torch.arange(text_length).unsqueeze(1)
-    widths = torch.arange(K).unsqueeze(0)
-    span_starts = starts.expand(-1, K)
-    span_ends = span_starts + widths
-    span_idx = torch.stack([span_starts, span_ends], dim=-1).view(-1, 2).unsqueeze(0)
-    span_mask = ((span_starts < text_length) & (span_ends < text_length)).view(-1).unsqueeze(0)
-
-    # --- 6. Create extra_kwargs (no attention_mask for ModernBERT) ---
+    # --- 5. Create extra_kwargs (no attention_mask for ModernBERT) ---
     gliner_data = {
-        "input_ids": input_ids.tolist(),
         "words_mask": words_mask.tolist(),
         "text_lengths": text_length,
-        "span_idx": span_idx[0].tolist(),
-        "span_mask": span_mask[0].tolist(),
     }
 
     prompt = TokensPrompt(prompt_token_ids=input_ids.tolist())
-    pooling_params = PoolingParams(extra_kwargs=gliner_data)
+    pooling_params = PoolingParams(task="plugin", extra_kwargs=gliner_data)
 
     # --- 7. Load vLLM and run ---
     vllm_model = LLM(
@@ -250,18 +237,28 @@ def run_vllm_gliner():
         enforce_eager=True,
         dtype="bfloat16",
         enable_prefix_caching=False,
+        enable_chunked_prefill=False,
+        gpu_memory_utilization=0.78,
     )
 
     # Warmup
-    _ = vllm_model.embed([prompt], pooling_params=pooling_params)
+    _ = vllm_model.encode(
+        [prompt],
+        pooling_params=pooling_params,
+        pooling_task="plugin",
+    )
 
     N = 10
     t0 = time.perf_counter()
     for _ in range(N):
-        outputs = vllm_model.embed([prompt], pooling_params=pooling_params)
+        outputs = vllm_model.encode(
+            [prompt],
+            pooling_params=pooling_params,
+            pooling_task="plugin",
+        )
     vllm_latency = (time.perf_counter() - t0) / N * 1000
 
-    raw = outputs[0].outputs.embedding
+    raw = outputs[0].outputs.data
     scores = torch.tensor(raw)
     print(f"vLLM output shape: {scores.shape}")
     print(f"Latency: {vllm_latency:.1f}ms (avg {N} runs)")

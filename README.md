@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/ddickmann/vllm-factory/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://python.org)
-[![vLLM 0.15+](https://img.shields.io/badge/vLLM-0.15%2B-green.svg)](https://github.com/vllm-project/vllm)
+[![vLLM 0.19+](https://img.shields.io/badge/vLLM-0.19%2B-green.svg)](https://github.com/vllm-project/vllm)
 [![Plugins](https://img.shields.io/badge/Plugins-12_models-purple.svg)](#plugins)
 [![Parity](https://img.shields.io/badge/Parity-12%2F12_passing-brightgreen.svg)](#parity)
 
@@ -13,7 +13,7 @@
 ```bash
 # Install and serve any model in 3 commands
 pip install -e ".[gliner]"
-pip install "vllm==0.15.1"          # always install vLLM last
+pip install vllm                     # requires vLLM >= 0.19
 
 vllm serve VAGOsolutions/SauerkrautLM-Multi-Reason-ModernColBERT \
   --runner pooling --trust-remote-code --dtype bfloat16 \
@@ -32,19 +32,20 @@ curl -s http://localhost:8000/pooling \
 
 ## Benchmarks — vLLM Factory vs vanilla PyTorch
 
-Measured on NVIDIA RTX A5000, 500 requests, 512–768 tokens, bfloat16. Peak throughput factor at optimal concurrency (saturate mode). Full sweep data and charts in [`bench/`](bench/).
+Measured on NVIDIA RTX A5000, 500 requests, 512–768 tokens, bfloat16, vLLM 0.19.0 V1 engine. Peak throughput factor at optimal concurrency (saturate mode). Full sweep data and charts in [`bench/`](bench/).
 
 | Model | Task | Params | Throughput Factor | vLLM req/s | Parity |
 |:------|:-----|-------:|:-----------------:|:----------:|:------:|
-| [MT5 GLiNER](https://huggingface.co/knowledgator/gliner-x-large) | NER | 800M | **11.7x** | 183 req/s | 1.000 |
-| [LFM2-ColBERT](https://huggingface.co/LiquidAI/LFM2-ColBERT-350M) | Retrieval | 350M | **8.6x** | 321 req/s | 1.000 |
-| [ColLFM2](https://huggingface.co/VAGOsolutions/SauerkrautLM-ColLFM2-450M-v0.1) | Multimodal retrieval | 450M | **5.3x** | 18 req/s | 0.9996 |
-| [MMBert GLiNER](https://huggingface.co/VAGOsolutions/SauerkrautLM-GLiNER) | NER | 150M | **4.6x** | 220 req/s | 1.000 |
-| [ModernColBERT](https://huggingface.co/VAGOsolutions/SauerkrautLM-Multi-Reason-ModernColBERT) | Retrieval | 149M | **3.3x** | 185 req/s | 0.970 |
-| [ColBERT-Zero](https://huggingface.co/lightonai/ColBERT-Zero) | Retrieval | — | **2.5x** | 179 req/s | 0.970 |
-| [DeBERTa GLiNER2](https://huggingface.co/fastino/gliner2-large-v1) | Schema extraction | 304M | **2.4x** | 267 req/s | 1.000 |
+| [DeBERTa GLiNER Linker](https://huggingface.co/knowledgator/gliner-linker-large-v1.0) | Entity linking | 304M | **12.6x** | 188 req/s | 1.000 |
+| [MT5 GLiNER](https://huggingface.co/knowledgator/gliner-x-large) | NER | 800M | **10.2x** | 156 req/s | 1.000 |
+| [DeBERTa GLiNER2](https://huggingface.co/fastino/gliner2-large-v1) | Schema extraction | 304M | **6.1x** | 263 req/s | 1.000 |
+| [ColLFM2](https://huggingface.co/VAGOsolutions/SauerkrautLM-ColLFM2-450M-v0.1) | Multimodal retrieval | 450M | **4.9x** | 18 req/s | 0.9996 |
+| [LFM2-ColBERT](https://huggingface.co/LiquidAI/LFM2-ColBERT-350M) | Retrieval | 350M | **4.6x** | 174 req/s | 1.000 |
+| [MMBert GLiNER](https://huggingface.co/VAGOsolutions/SauerkrautLM-GLiNER) | NER | 150M | **3.5x** | 180 req/s | 1.000 |
+| [ModernColBERT](https://huggingface.co/VAGOsolutions/SauerkrautLM-Multi-Reason-ModernColBERT) | Retrieval | 149M | **2.1x** | 100 req/s | 0.970 |
+| [ColBERT-Zero](https://huggingface.co/lightonai/ColBERT-Zero) | Retrieval | — | **1.7x** | 35 req/s | 0.970 |
 
-> **Throughput factor** = vLLM Factory req/s ÷ vanilla PyTorch req/s. **Parity** = cosine similarity (embeddings) or entity recall (NER) vs reference implementation. All 12/12 plugins pass parity validation.
+> **Throughput factor** = vLLM Factory req/s ÷ vanilla PyTorch req/s (batch_size=1). **Parity** = cosine similarity (embeddings) or entity recall (NER) vs reference implementation. All 12/12 plugins pass parity validation.
 
 <details>
 <summary><b>Per-model benchmark charts</b> (click to expand)</summary>
@@ -94,8 +95,6 @@ pip install vllm-factory          # from PyPI (Linux, requires CUDA)
 
 Or from source for development:
 
-> **Critical: vLLM must be the last package installed.** Other dependencies (especially `gliner`) can pull in `transformers` versions that conflict with vLLM. Installing vLLM last ensures it pins all shared dependencies to compatible versions.
-
 ### Standard install
 
 ```bash
@@ -104,12 +103,15 @@ git clone https://github.com/ddickmann/vllm-factory.git && cd vllm-factory
 # Step 1: Install vllm-factory + base dependencies (+ gliner for NER/linking models)
 pip install -e ".[gliner]"
 
-# Step 2: Install vLLM — ALWAYS LAST
-pip install "vllm==0.15.1"
+# Step 2: Install vLLM (>= 0.19 required)
+pip install vllm
 
-# Step 3: Apply the pooling patch (one-time, enables extra_kwargs passthrough)
-python -m forge.patches.pooling_extra_kwargs
+# Step 3: Verify environment (shows detected mode and registered plugins)
+python -m vllm_factory.compat.doctor
 ```
+
+> **No patching required.** vLLM >= 0.19 supports `extra_kwargs` and custom
+> IOProcessors natively. All 12 plugins work out of the box. Run `doctor` to confirm.
 
 ### Minimal install (no GLiNER models)
 
@@ -117,21 +119,20 @@ If you only need embedding or ColBERT models (no NER/linking):
 
 ```bash
 pip install -e .
-pip install "vllm==0.15.1"
-python -m forge.patches.pooling_extra_kwargs
+pip install vllm
+python -m vllm_factory.compat.doctor
 ```
 
 ### Docker
 
 ```dockerfile
-FROM vllm/vllm-openai:v0.15.1
+FROM vllm/vllm-openai:latest
 
 COPY . /app/vllm-factory
 WORKDIR /app/vllm-factory
 
-# Install deps first, vLLM is already in base image (last)
 RUN pip install -e ".[gliner]"
-RUN python -m forge.patches.pooling_extra_kwargs
+RUN python -m vllm_factory.compat.doctor
 
 CMD ["vllm", "serve", "VAGOsolutions/SauerkrautLM-Multi-Reason-ModernColBERT", \
      "--runner", "pooling", "--trust-remote-code", "--dtype", "bfloat16", \
@@ -429,25 +430,29 @@ python scripts/serve_parity_test.py --plugin colqwen3  # single plugin
 
 ## How it works
 
-### IOProcessor architecture
+### Architecture: FactoryIOProcessor + FactoryPooler
 
-Each plugin registers an **IOProcessor** — a vLLM-native plugin that runs pre/post-processing inside the serving process. No client-side tokenization needed.
+Each plugin registers a **FactoryIOProcessor** (subclass of vLLM's `IOProcessor`) for pre/post-processing and a **FactoryPooler** for task-specific business logic. A single **VllmPoolerAdapter** bridges pooler logic to vLLM's internal pooler ABC. No client-side tokenization needed.
 
 ```
 POST /pooling {"data": {"text": "..."}}
     │
     ▼
-┌─────────────────────────────────────────────────┐
-│  IOProcessor.parse_request()  → typed input      │
-│  IOProcessor.pre_process()    → tokenized prompt  │
-│  engine.encode()              → model forward     │
-│  IOProcessor.post_process()   → structured output │
-│  IOProcessor.output_to_response() → JSON response │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  FactoryIOProcessor                                         │
+│    .parse_request()       → typed input                     │
+│    .factory_pre_process() → tokenized prompt + extra_kwargs │
+│    engine.encode()        → model forward                   │
+│      └─ VllmPoolerAdapter → FactoryPooler.forward()         │
+│    .factory_post_process()→ structured output               │
+│    .output_to_response()  → JSON response                   │
+└─────────────────────────────────────────────────────────────┘
     │
     ▼
 {"data": [{"text": "Apple Inc.", "label": "company", "score": 0.95}, ...]}
 ```
+
+The **FactoryPooler** protocol (`vllm_factory/pooling/protocol.py`) has zero vLLM imports — all pooler business logic is decoupled from vLLM internals. The **VllmPoolerAdapter** (`vllm_factory/pooling/vllm_adapter.py`) is the single coupling point.
 
 ### Custom Triton Kernels
 
@@ -468,10 +473,11 @@ vllm-factory/
 ├── models/               # Encoder backbones (DeBERTa, ModernBERT, mT5, ...)
 ├── kernels/              # Custom Triton kernels
 ├── poolers/              # Shared pooler heads (ColBERT, GLiNER, ColPali, linker)
-├── forge/                # Shared infrastructure (model_prep, patches, server utilities)
+├── vllm_factory/         # Core abstractions (FactoryPooler protocol, VllmPoolerAdapter, compat layer)
+├── forge/                # Shared infrastructure (model_prep, server utilities)
+├── bench/                # Benchmark framework with automated sweeps and chart generation
 ├── examples/             # Ready-to-run example scripts
 ├── scripts/              # Parity test orchestrator, reference generators
-├── notebooks/            # Jupyter notebooks for each model family
 ├── Makefile              # install · serve · test · bench · lint
 └── pyproject.toml        # All 12 plugins registered as vLLM entry points
 ```
@@ -488,7 +494,8 @@ A new plugin needs:
 |---|---|
 | `config.py` | HuggingFace-compatible config (dimensions, layers) |
 | `model.py` | Encoder forward path + `self.pooler` wiring |
-| `io_processor.py` | IOProcessor — parse, pre-process, post-process, response |
+| `io_processor.py` | Subclass `FactoryIOProcessor` — parse, pre-process, post-process, response |
+| `pooler.py` | Implement `FactoryPooler` protocol (zero vLLM imports) or re-export shared pooler |
 | `parity_test.py` | Validation against reference implementation |
 
 ---
@@ -512,7 +519,7 @@ See [benchmark table above](#benchmarks--vllm-factory-vs-vanilla-pytorch) for th
 - **No vLLM forks** — plugins, not patches
 - **Parity before performance** — every optimization validated against reference
 - **IOProcessor-first** — all pre/post-processing runs server-side
-- **vLLM must install last** — dependency order is enforced to avoid version conflicts
+- **Decoupled pooler logic** — `FactoryPooler` protocol has zero vLLM imports; a single `VllmPoolerAdapter` bridges to vLLM's internals
 - **Task-aware architecture** — backbone + pooler + IOProcessor = single deployment contract
 
 ---
@@ -521,10 +528,31 @@ See [benchmark table above](#benchmarks--vllm-factory-vs-vanilla-pytorch) for th
 
 - Python 3.11+
 - PyTorch 2.0+
-- vLLM 0.15+ (installed last)
+- vLLM >= 0.19
 - NVIDIA GPU with CUDA support (production)
 - Triton 2.0+ (for custom kernels, optional)
 - macOS users: see [`docs/macos_vllm.md`](docs/macos_vllm.md) for local dev setup (CPU only, no production serving)
+
+## Known Limitations (0.2.0)
+
+### Runtime Monkey-Patches
+
+Two scoped monkey-patches remain in 0.2.0. Both are idempotent, applied in model `__init__` (not at import time), and transparently documented in-code with "WHY / CHARACTERISTICS / UPSTREAM RESOLUTION" sections.
+
+| Patch | Scope | Purpose | Remove When |
+|---|---|---|---|
+| `GPUModelRunner._preprocess` | GLiNER linker + rerank plugins | Forwards `attention_mask` from `extra_kwargs` into model forward, so DeBERTa correctly masks padding positions | vLLM forwards all `extra_kwargs` keys into `model_kwargs` natively |
+| `Attention.get_kv_cache_spec` | `nemotron_colembed` only | Returns `None` for `ENCODER_ONLY` attention layers to skip unnecessary KV cache allocation | vLLM returns `None` for encoder-only layers natively |
+
+### GLiNER High-Concurrency Throughput
+
+GLiNER models show 10–30% throughput reduction at high concurrency (c≥32) compared to 0.1.x on vLLM 0.15.1. This is attributed to vLLM 0.19's V1 engine IPC overhead for serializing `extra_kwargs` payloads over ZMQ. Single-request latency is on par or better. ColBERT models (which use `PassthroughPooler` and the native token embedding path) are not affected.
+
+### Partial Benchmark Coverage
+
+`colqwen3` and `nemotron_colembed` were verified for model loading and parity but not full-benchmark throughput tested in this release cycle due to environment constraints.
+
+---
 
 ## Enterprise support
 
@@ -551,11 +579,13 @@ make lint          # ruff check
 
 ## Roadmap
 
-- [ ] Expand benchmark sweeps to ColQwen3, Nemotron-ColEmbed, and EmbeddingGemma (currently 7/12 models benchmarked)
+- [x] ~~Upstream pooling protocol changes to vLLM to reduce runtime patch dependency~~ — native IOProcessor path on vLLM >= 0.19 eliminates the patch for all 12 plugins
+- [x] ~~Decouple pooler logic from vLLM internals~~ — `FactoryPooler` protocol with zero vLLM imports, single `VllmPoolerAdapter` bridge (0.2.0)
+- [ ] Expand benchmark sweeps to ColQwen3, Nemotron-ColEmbed, and EmbeddingGemma
 - [ ] HuggingFace demo Space — pick a model, type text, see embeddings/entities served by vLLM Factory
 - [ ] CI benchmark automation — run throughput + parity on every PR, publish results to GitHub Pages
-- [ ] Upstream pooling protocol changes to vLLM to reduce runtime patch dependency
 - [ ] Plugin authoring template with validation tooling and step-by-step generator
+- [ ] Upstream the 2 remaining monkey-patches (attention_mask forwarding, KV cache skip) to vLLM core
 
 Track progress in [GitHub Issues labeled `roadmap`](https://github.com/ddickmann/vllm-factory/issues?q=label%3Aroadmap).
 

@@ -1,7 +1,7 @@
 # Plugin Integration Guide
 
 Central reference for building vLLM Factory plugins. Every plugin lives in
-`plugins/<name>/` with the same 8-file structure.
+`plugins/<name>/` and follows a consistent structure.
 
 ---
 
@@ -19,28 +19,36 @@ Is your pooler reusable across multiple plugins?
 └── NO  → Put it in the plugin directory (task-specific, non-shared)
 
 What kind of output do you need?
-├── Multi-vector embeddings → pooler_for_token_embed + "ALL" pooling (see colqwen3)
-├── Span extraction / NER   → Custom pooler with extra_kwargs (see mmbert_gliner)
-├── Token classification    → pooler_for_token_classify (built-in vLLM pooler)
-└── Relation / pairwise     → Custom pooler with bi-affine head (plugin-specific)
+├── Multi-vector embeddings → PassthroughPooler + "ALL" pooling (see colqwen3)
+├── Span extraction / NER   → Custom FactoryPooler with extra_kwargs (see mmbert_gliner)
+├── Token classification    → Built-in vLLM pooler
+└── Relation / pairwise     → Custom FactoryPooler with bi-affine head (plugin-specific)
 ```
 
 ---
 
-## Standard 8-File Structure
+## Plugin Structure
 
-Every plugin has exactly these files:
+Each plugin needs these core files:
 
 | File | Purpose | Template |
 |------|---------|----------|
 | `__init__.py` | Auto-register model + config with vLLM on import | [below](#initpy) |
 | `config.py` | Extend a HF config with task-specific params | [below](#configpy) |
 | `model.py` | Wire backbone + pooler + weight loading | [below](#modelpy) |
-| `pooler.py` | Re-export shared pooler OR define custom pooler | [below](#poolerpy) |
-| `processor.py` | Async inference pipeline (preprocess → engine → postprocess) | [below](#processorpy) |
-| `setup.py` | Make plugin pip-installable | [below](#setuppy) |
-| `README.md` | Architecture, usage, benchmarks | — |
-| `benchmark.py` | Async throughput benchmark | — |
+| `pooler.py` | Implement `FactoryPooler` protocol OR re-export shared pooler | [below](#poolerpy) |
+| `io_processor.py` | Subclass `FactoryIOProcessor` for server-side I/O | [below](#io_processorpy) |
+| `parity_test.py` | Validation against reference implementation | — |
+
+### Key abstractions
+
+| Abstraction | Module | Purpose |
+|---|---|---|
+| `FactoryIOProcessor` | `vllm_factory.io.base` | Base class all IO processors inherit from. Handles vLLM ABC delegation. |
+| `FactoryPooler` | `vllm_factory.pooling.protocol` | Protocol (interface) for pooler business logic. **Zero vLLM imports.** |
+| `PoolerContext` | `vllm_factory.pooling.protocol` | Stable data model passed to `FactoryPooler.forward()`. |
+| `VllmPoolerAdapter` | `vllm_factory.pooling.vllm_adapter` | Bridges `FactoryPooler` to vLLM's Pooler ABC. Shared — not plugin-specific. |
+| `PassthroughPooler` | `vllm_factory.pooling.protocol` | No-op pooler for models that handle everything in `model.forward()`. |
 
 ---
 
@@ -84,14 +92,16 @@ class MyConfig(SomeBaseConfig):
 from vllm.config import VllmConfig
 
 class MyModel(nn.Module):
-    is_pooling_model = True  # required for pooling task
+    is_pooling_model = True
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
-        # 1. Create backbone
         self.model = SomeBackbone(vllm_config=vllm_config, prefix=...)
-        # 2. Create pooler
-        self.pooler = some_pooler(...)
+
+        # Wire pooler via VllmPoolerAdapter
+        from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
+        from .pooler import MyPooler
+        self.pooler = VllmPoolerAdapter.wrap(MyPooler(...), vllm_config)
 
     def forward(self, input_ids, positions, **kwargs) -> torch.Tensor:
         return self.model(input_ids=input_ids, positions=positions, **kwargs)
@@ -109,82 +119,99 @@ from poolers.gliner import GLiNERSpanPooler
 __all__ = ["GLiNERSpanPooler"]
 ```
 
-**Option B — Custom pooler (plugin-specific):**
+**Option B — Custom FactoryPooler (plugin-specific):**
 ```python
-class MyCustomPooler(nn.Module):
-    def forward(self, hidden_states, pooling_metadata):
-        # Custom logic here
-        return outputs
+import torch
+from vllm_factory.pooling.protocol import FactoryPooler, PoolerContext, split_hidden_states
+
+class MyCustomPooler:
+    """Implements FactoryPooler protocol — zero vLLM imports."""
+
+    def get_tasks(self) -> set[str]:
+        return {"plugin"}
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        ctx: PoolerContext,
+    ) -> list[torch.Tensor | None]:
+        per_seq = split_hidden_states(hidden_states, ctx.seq_lengths)
+        results = []
+        for i, hs in enumerate(per_seq):
+            extra = ctx.extra_kwargs[i] if ctx.extra_kwargs else {}
+            output = self._process(hs, extra)
+            results.append(output)
+        return results
+
+    def _process(self, hidden: torch.Tensor, extra: dict) -> torch.Tensor:
+        # Your task-specific logic here
+        return hidden.mean(dim=0)
 ```
 
-### `processor.py`
-
-Every plugin gets a processor that wraps the vLLM engine with a 3-stage pipeline:
-
-```
-User Input → preprocess() → AsyncLLMEngine.encode() → postprocess() → Output
-```
-
-Extend `forge.processor_base.BaseProcessor` and implement `preprocess()` + `postprocess()`:
+### `io_processor.py`
 
 ```python
-from forge.processor_base import BaseProcessor, PreprocessedInput
-from vllm import PoolingParams
-from vllm.inputs import TokensPrompt
+from vllm_factory.io.base import (
+    FactoryIOProcessor,
+    PoolingRequestOutput,
+    TokensPrompt,
+)
+from vllm.config import VllmConfig
+from vllm.pooling_params import PoolingParams
 
-class MyProcessor(BaseProcessor):
-    """Async processor for my plugin."""
+class MyIOProcessor(FactoryIOProcessor):
+    """Server-side I/O for my plugin."""
 
-    def __init__(self, model_path: str, **kwargs):
-        super().__init__(model_path, **kwargs)
-        self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+    pooling_task = "plugin"  # or "token_embed" for embedding models
 
-    def preprocess(self, text: str, **kwargs) -> PreprocessedInput:
-        tokens = self._tokenizer(text, truncation=True, max_length=512)
-        return PreprocessedInput(
-            prompt=TokensPrompt(prompt_token_ids=tokens["input_ids"]),
-            pooling_params=PoolingParams(task="token_embed"),
-            metadata={"text": text},
+    def __init__(self, vllm_config: VllmConfig, **kwargs):
+        super().__init__(vllm_config, **kwargs)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            vllm_config.model_config.model
         )
 
-    def postprocess(self, raw_output, metadata=None):
-        return torch.as_tensor(raw_output) if raw_output is not None else None
+    def factory_pre_process(self, data: dict) -> tuple[TokensPrompt, PoolingParams, dict]:
+        """Tokenize input and build extra_kwargs."""
+        text = data.get("text", "")
+        tokens = self._tokenizer(text, truncation=True, max_length=512)
+
+        prompt = TokensPrompt(prompt_token_ids=tokens["input_ids"])
+        params = PoolingParams()
+        extra_kwargs = {"some_metadata": data.get("metadata")}
+        return prompt, params, extra_kwargs
+
+    def factory_post_process(self, output: PoolingRequestOutput, meta: dict) -> dict:
+        """Convert raw model output to structured response."""
+        embedding = output.outputs.embedding
+        return {"embedding": embedding}
+
+
+def get_processor_cls():
+    return MyIOProcessor
 ```
 
-**What the base class gives you for free:**
+---
 
-| Method | Description |
-|--------|-------------|
-| `_ensure_engine()` | Lazy AsyncLLMEngine init with asyncio.Lock |
-| `process_single(input, **kw)` | preprocess → encode → postprocess (with retry) |
-| `process_batch(inputs, **kw)` | Concurrent `asyncio.gather` over `process_single` |
-| `run(input)` / `run_batch(inputs)` | Sync wrappers via `asyncio.run()` |
-| `close()` | Shutdown engine + free GPU memory |
+## Registration Flow
 
-**Usage:**
-
-```python
-processor = MyProcessor("my-model")
-
-# Async
-result = await processor.process_single("Hello world")
-results = await processor.process_batch(["text1", "text2"])
-
-# Sync
-result = processor.run("Hello world")
-results = processor.run_batch(["text1", "text2"])
 ```
+pyproject.toml declares entry points:
+  [project.entry-points."vllm.general_plugins"]
+  my_plugin = "plugins.my_plugin:register"
 
-### `setup.py`
-
-```python
-from setuptools import setup, find_packages
-setup(
-    name="vllm-factory-my-plugin", version="0.1.0",
-    packages=find_packages(), python_requires=">=3.11",
-    install_requires=["vllm==0.15.1", "torch>=2.0", "transformers>=4.40"],
-    entry_points={"vllm.general_plugins": ["my_plugin = my_plugin:register"]},
-)
+  [project.entry-points."vllm.io_processor_plugins"]
+  my_plugin_io = "plugins.my_plugin.io_processor:get_processor_cls"
+    │
+    ▼
+vllm serve model-name --runner pooling --io-processor-plugin my_plugin_io
+    │
+    ▼
+vLLM loads general_plugins → calls register() → model + config registered
+vLLM loads io_processor_plugins → gets MyIOProcessor class
+    │
+    ▼
+vLLM instantiates MyModel(vllm_config=...) → loads weights → serves
+MyIOProcessor handles all /pooling request I/O
 ```
 
 ---
@@ -217,7 +244,7 @@ Use when HF checkpoint key names differ structurally from vLLM's.
 def load_weights(self, weights):
     params = dict(self.model.named_parameters())
     for name, tensor in weights:
-        target = self._map_key(name)  # your mapping logic
+        target = self._map_key(name)
         if target and target in params:
             params[target].data.copy_(tensor)
 ```
@@ -234,243 +261,40 @@ if head_path.exists():
     self.pooler.load_state_dict(torch.load(head_path), strict=False)
 ```
 
-### Pattern 4: Weight remapping in iterator
-
-Use when only a few keys need renaming.
-
-```python
-def remap():
-    for name, tensor in weights:
-        if name.startswith("score."):
-            yield name.replace("score.", "classifier."), tensor
-        else:
-            yield name, tensor
-loader.load_weights(remap())
-```
-
-
-
 ---
 
 ## Reference Plugins by Complexity
 
-| Plugin | Backbone | Pooler | Weight Loading | Complexity |
-|--------|----------|--------|---------------|------------|
-| `colqwen3` | vLLM built-in | Inline projection | WeightsMapper | ⭐⭐ |
-| `collfm2` | vLLM built-in | Inline projection | WeightsMapper | ⭐⭐ |
-| `moderncolbert` | Custom encoder | Shared (ColBERT) | Manual mapping | ⭐⭐⭐ |
-| `mmbert_gliner` | Custom encoder | Shared (GLiNER) | Manual mapping | ⭐⭐⭐ |
-| `mt5_gliner` | Custom encoder | Shared (GLiNER) | Manual + projection | ⭐⭐⭐⭐ |
-
----
-
-## Registration Flow
-
-```
-pip install -e plugins/my_plugin/
-    ↓
-vLLM loads entry point: vllm.general_plugins → my_plugin:register
-    ↓
-register() calls:
-  1. AutoConfig.register("my_model_type", MyConfig)
-  2. ModelRegistry.register_model("MyModel", MyModel)
-    ↓
-vllm serve model-name --task pooling --trust-remote-code
-    ↓
-vLLM reads config.json → model_type → finds MyConfig
-    ↓
-vLLM instantiates MyModel(vllm_config=...) → loads weights → serves
-```
+| Plugin | Backbone | Pooler | IO Processor | Complexity |
+|--------|----------|--------|-------------|------------|
+| `colqwen3` | vLLM built-in | PassthroughPooler | FactoryIOProcessor | Low |
+| `collfm2` | vLLM built-in | PassthroughPooler | FactoryIOProcessor | Low |
+| `moderncolbert` | Custom encoder | ColBERTPooler (shared) | FactoryIOProcessor | Medium |
+| `mmbert_gliner` | Custom encoder | GLiNERSpanPooler (shared) | FactoryIOProcessor | Medium |
+| `mt5_gliner` | Custom encoder | GLiNERSpanPooler (shared) | FactoryIOProcessor | High |
+| `deberta_gliner_linker` | Custom encoder | LinkerPooler (custom) | FactoryIOProcessor | High |
 
 ---
 
 ## Parity Testing
 
 Every plugin must prove its vLLM output matches the reference HuggingFace /
-PyTorch implementation. Use `forge.testing.harness.ModelTestHarness`.
-
-### Using ModelTestHarness
-
-```python
-from forge.testing.harness import ModelTestHarness
-
-harness = ModelTestHarness(
-    plugin_name="moderncolbert",
-    model_id="answerdotai/ModernBERT-base",
-)
-
-# Define reference and vLLM functions
-def reference_fn(inputs: list[str]) -> torch.Tensor:
-    """Run the HuggingFace / PyTorch reference model."""
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModel.from_pretrained(model_id)
-    tokens = tokenizer(inputs, return_tensors="pt", padding=True)
-    with torch.no_grad():
-        return model(**tokens).last_hidden_state
-
-def vllm_fn(inputs: list[str]) -> torch.Tensor:
-    """Run the vLLM model via LLM.encode()."""
-    from vllm import LLM
-    llm = LLM(model=model_id, task="pooling", trust_remote_code=True)
-    outputs = llm.encode(inputs)
-    return torch.stack([torch.tensor(o.outputs.embedding) for o in outputs])
-
-# Run parity check
-result = harness.test_parity(
-    inputs=["Hello world", "The quick brown fox"],
-    reference_fn=reference_fn,
-    vllm_fn=vllm_fn,
-    min_cosine_sim=0.99,  # Minimum cosine similarity to pass
-    atol=1e-4,            # Absolute tolerance
-)
-assert result.passed, f"Parity failed: cosine_sim={result.cosine_similarity}"
-```
+PyTorch implementation.
 
 ### Parity Thresholds
 
-| Precision | min_cosine_sim | atol | Notes |
-|-----------|---------------|------|-------|
-| FP32 | 0.9999 | 1e-4 | Near-exact match |
-| FP16 / BF16 | 0.999 | 1e-3 | Standard for serving |
-| FP8 | 0.99 | 1e-2 | Quantized models |
+| Precision | min_cosine_sim | Notes |
+|-----------|---------------|-------|
+| BF16 (standard) | 0.999 | Standard for serving |
+| NER models | recall = 1.0 | Every reference entity must be found |
+| FP8 | 0.99 | Quantized models |
 
 ### What to Test
 
 1. **Shape parity** — output dimensions match reference
-2. **Value parity** — cosine similarity above threshold
+2. **Value parity** — cosine similarity above threshold (embeddings) or entity recall = 1.0 (NER)
 3. **Edge cases** — empty input, max-length input, batch of 1 vs many
 4. **Weight loading** — all expected weights loaded (check `load_weights` return set)
-
----
-
-## Benchmarking
-
-Every plugin includes a `benchmark.py` for async HTTP throughput measurement.
-
-### benchmark.py Template
-
-```python
-"""My Plugin Throughput Benchmark"""
-import argparse, asyncio, time, statistics
-import aiohttp
-
-async def send_request(session, url, model, text):
-    """Send a single pooling request, return latency in ms."""
-    start = time.perf_counter()
-    async with session.post(url, json={"model": model, "input": text}) as r:
-        await r.json()
-    return (time.perf_counter() - start) * 1000
-
-async def run_benchmark(base_url, model, num_requests, concurrency, warmup=50):
-    url = f"{base_url}/v1/pooling"
-
-    # Use a mix of short and long inputs for realistic benchmarking
-    texts = [f"Short query {i}" for i in range(50)]
-    texts += [f"Long document about topic {i}. " * 20 for i in range(50)]
-
-    connector = aiohttp.TCPConnector(limit=concurrency)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        # Warmup — critical for accurate results (JIT, CUDA graphs, etc.)
-        await asyncio.gather(*[
-            send_request(session, url, model, texts[i % 100])
-            for i in range(warmup)
-        ])
-
-        # Timed run with bounded concurrency
-        start = time.perf_counter()
-        semaphore = asyncio.Semaphore(concurrency)
-
-        async def bounded(text):
-            async with semaphore:
-                return await send_request(session, url, model, text)
-
-        latencies = sorted(await asyncio.gather(*[
-            bounded(texts[i % 100]) for i in range(num_requests)
-        ]))
-        elapsed = time.perf_counter() - start
-
-    return {
-        "req/s": round(num_requests / elapsed, 1),
-        "p50_ms": round(statistics.median(latencies), 1),
-        "p95_ms": round(latencies[int(len(latencies) * 0.95)], 1),
-        "p99_ms": round(latencies[int(len(latencies) * 0.99)], 1),
-    }
-
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--model", required=True)
-    p.add_argument("--base-url", default="http://localhost:8000")
-    p.add_argument("--num-requests", type=int, default=1000)
-    p.add_argument("--concurrency", type=int, default=32)
-    args = p.parse_args()
-    print(asyncio.run(run_benchmark(args.base_url, args.model,
-                                     args.num_requests, args.concurrency)))
-
-if __name__ == "__main__":
-    main()
-```
-
-### Running Benchmarks
-
-```bash
-# 1. Start the vLLM server
-vllm serve my-model --task pooling --trust-remote-code &
-
-# 2. Wait for server to be ready
-sleep 30
-
-# 3. Run the benchmark
-python plugins/my_plugin/benchmark.py \
-    --model my-model \
-    --num-requests 1000 \
-    --concurrency 32
-```
-
-### Using ModelTestHarness for Offline Benchmarks
-
-For GPU-level benchmarking without HTTP overhead:
-
-```python
-harness = ModelTestHarness("my_plugin", "my-model-id")
-
-results = harness.benchmark_throughput(
-    inputs=["Sample text"] * 100,
-    run_fn=lambda batch: llm.encode(batch),
-    batch_sizes=[1, 8, 32, 128],
-    n_warmup=3,
-    n_runs=10,
-)
-
-# Generate markdown report
-harness.generate_report("reports/my_plugin_report.md")
-```
-
-### Generating a Full Report
-
-`ModelTestHarness.generate_report()` outputs a markdown file with both parity
-and benchmark tables:
-
-```python
-harness.test_parity(inputs, reference_fn, vllm_fn)
-harness.benchmark_throughput(inputs, run_fn)
-harness.generate_report("reports/my_plugin.md")
-
-# Output includes:
-# ## Parity Results
-# | # | Cosine Sim | Max Error | Mean Error | Status |
-#
-# ## Benchmark Results
-# | Batch Size | Tokens/sec | P50 (ms) | P95 (ms) | P99 (ms) |
-```
-
-### Benchmark Checklist
-
-- [ ] Warmup before timing (50+ requests for HTTP, 3+ runs for offline)
-- [ ] Test multiple concurrency levels (1, 8, 32)
-- [ ] Mix short and long inputs
-- [ ] Report p50 AND p99 (mean is misleading)
-- [ ] Compare against reference (PyTorch / PyLate / sentence-transformers)
-- [ ] Record GPU memory usage (via `nvidia-smi`)
 
 ---
 
@@ -478,9 +302,9 @@ harness.generate_report("reports/my_plugin.md")
 
 | Issue | Solution |
 |-------|----------|
-| `KeyError: model not registered` | Ensure `register()` is called in `__init__.py` AND `setup.py` entry point |
+| `KeyError: model not registered` | Ensure `register()` is called in `__init__.py` AND entry point is in `pyproject.toml` |
 | `attention_bias mismatch` (Qwen3) | Use `Qwen3Model`, not `Qwen2Model` — they differ on `attention_bias` |
 | `Weight shape mismatch` | Check `WeightsMapper` prefix order (longer prefixes first) |
 | `NaN in classification` | Return hidden states from `forward()`, NOT logits — the pooler applies the head |
-| `Custom head not loading` | Check that `custom_head.pt` exists in the model directory |
-| `Kernel import error` | Use absolute imports: `from kernels.ff_fused import ...` |
+| `Unsupported task: 'plugin'` | Set `pooling_task = "token_embed"` on your IOProcessor for embedding-style models |
+| `extra_kwargs not reaching pooler` | Ensure `factory_pre_process` returns extra_kwargs as the 3rd tuple element |

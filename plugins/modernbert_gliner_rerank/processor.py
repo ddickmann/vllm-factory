@@ -139,11 +139,6 @@ class GLiNERRerankProcessor:
 
         input_ids = batch["input_ids"][0].detach().cpu()
         words_mask = batch["words_mask"][0].detach().cpu()
-        am = batch.get("attention_mask")
-        if am is not None:
-            attention_mask = am[0].detach().cpu()
-        else:
-            attention_mask = torch.ones_like(input_ids, dtype=torch.long)
         tl = batch["text_lengths"]
         if tl.dim() == 2:
             text_length = int(tl[0, 0].item())
@@ -155,10 +150,9 @@ class GLiNERRerankProcessor:
             "words": words,
             "word_starts": word_starts,
             "word_ends": word_ends,
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
             "words_mask": words_mask,
             "text_lengths": text_length,
+            "prompt_token_ids": input_ids.tolist(),
         }
 
     def _run_vllm(self, tokenized: List[dict]) -> List[torch.Tensor]:
@@ -167,21 +161,23 @@ class GLiNERRerankProcessor:
 
         prompts, params = [], []
         for t in tokenized:
-            ids = t["input_ids"].tolist()
+            ids = t["prompt_token_ids"]
             data = {
-                "input_ids": ids,
-                "attention_mask": t["attention_mask"].tolist(),
                 "words_mask": t["words_mask"].tolist(),
                 "text_lengths": t["text_lengths"],
             }
             prompts.append(TokensPrompt(prompt_token_ids=ids))
-            params.append(PoolingParams(extra_kwargs=data))
+            params.append(PoolingParams(task="plugin", extra_kwargs=data))
 
-        outputs = self._llm.embed(prompts, pooling_params=params)
+        outputs = self._llm.encode(
+            prompts,
+            pooling_params=params,
+            pooling_task="plugin",
+        )
 
         results = []
         for out in outputs:
-            results.append(torch.tensor(out.outputs.embedding))
+            results.append(torch.tensor(out.outputs.data))
         return results
 
     def _decode(

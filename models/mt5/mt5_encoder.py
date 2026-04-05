@@ -28,7 +28,10 @@ from transformers import MT5Config as HFMT5Config
 try:
     from vllm.attention.layer import Attention
 except ImportError:
-    from vllm.attention import Attention
+    try:
+        from vllm.attention import Attention
+    except ImportError:
+        from vllm.model_executor.layers.attention import Attention
 from vllm.config import CacheConfig
 from vllm.distributed import (
     get_pp_group,

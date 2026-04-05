@@ -20,12 +20,12 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
-from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
-from vllm.inputs import TokensPrompt
-from vllm.inputs.data import PromptType
-from vllm.outputs import PoolingRequestOutput
-from vllm.plugins.io_processors.interface import IOProcessor
-from vllm.pooling_params import PoolingParams
+from vllm_factory.io.base import (
+    FactoryIOProcessor,
+    PoolingRequestOutput,
+    PromptType,
+    TokensPrompt,
+)
 
 
 @dataclass
@@ -35,21 +35,22 @@ class LFM2ColBERTInput:
     text: str
 
 
-class LFM2ColBERTIOProcessor(IOProcessor[LFM2ColBERTInput, list[float]]):
+class LFM2ColBERTIOProcessor(FactoryIOProcessor):
     """IOProcessor for LFM2-ColBERT — LiquidAI/LFM2-ColBERT-350M.
 
     Data flow:
         IOProcessorRequest(data={text})
-        → parse_request → LFM2ColBERTInput
-        → pre_process   → TokensPrompt(prompt_token_ids=...)
-        → validate_or_generate_params → PoolingParams(task="token_embed")
-        → engine.encode  → PoolingRequestOutput
-        → post_process   → list[float] (flattened multi-vector embeddings)
-        → output_to_response → IOProcessorResponse(data=[...])
+        → factory_parse        → LFM2ColBERTInput
+        → factory_pre_process  → TokensPrompt(prompt_token_ids=...)
+        → merge_pooling_params → PoolingParams(task="plugin")
+        → engine.encode        → PoolingRequestOutput
+        → factory_post_process → base64-encoded flattened multi-vector embeddings
     """
 
-    def __init__(self, vllm_config: VllmConfig):
-        super().__init__(vllm_config)
+    pooling_task = "token_embed"
+
+    def __init__(self, vllm_config: VllmConfig, *args, **kwargs):
+        super().__init__(vllm_config, *args, **kwargs)
         from transformers import AutoTokenizer
 
         model_name = vllm_config.model_config.model
@@ -58,13 +59,11 @@ class LFM2ColBERTIOProcessor(IOProcessor[LFM2ColBERTInput, list[float]]):
             trust_remote_code=True,
         )
 
-    def parse_request(self, request: Any) -> LFM2ColBERTInput:
-        if hasattr(request, "data"):
-            data = request.data
-        elif isinstance(request, dict) and "data" in request:
-            data = request["data"]
-        else:
-            data = request
+    def factory_parse(self, data: Any) -> LFM2ColBERTInput:
+        if hasattr(data, "data"):
+            data = data.data
+        elif isinstance(data, dict) and "data" in data:
+            data = data["data"]
 
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict with 'text' key, got {type(data)}")
@@ -74,14 +73,13 @@ class LFM2ColBERTIOProcessor(IOProcessor[LFM2ColBERTInput, list[float]]):
 
         return LFM2ColBERTInput(text=data["text"])
 
-    def pre_process(
+    def factory_pre_process(
         self,
-        prompt: LFM2ColBERTInput,
-        request_id: str | None = None,
-        **kwargs,
+        parsed_input: LFM2ColBERTInput,
+        request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
         tokens = self._tokenizer(
-            prompt.text,
+            parsed_input.text,
             truncation=True,
             max_length=512,
             padding=False,
@@ -89,21 +87,10 @@ class LFM2ColBERTIOProcessor(IOProcessor[LFM2ColBERTInput, list[float]]):
         )
         return TokensPrompt(prompt_token_ids=tokens["input_ids"])
 
-    def validate_or_generate_params(
-        self,
-        params: PoolingParams | None = None,
-    ) -> PoolingParams:
-        if params is not None:
-            if params.task is None:
-                params.task = "token_embed"
-            return params
-        return PoolingParams(task="token_embed")
-
-    def post_process(
+    def factory_post_process(
         self,
         model_output: Sequence[PoolingRequestOutput],
-        request_id: str | None = None,
-        **kwargs,
+        request_meta: Any,
     ) -> str:
         import base64
 
@@ -121,12 +108,6 @@ class LFM2ColBERTIOProcessor(IOProcessor[LFM2ColBERTInput, list[float]]):
         return base64.b64encode(
             raw.cpu().contiguous().to(torch.float32).numpy().tobytes()
         ).decode("ascii")
-
-    def output_to_response(
-        self,
-        plugin_output: str,
-    ) -> IOProcessorResponse:
-        return IOProcessorResponse(data=plugin_output)
 
 
 def get_processor_cls() -> str:

@@ -22,6 +22,7 @@ from typing import Iterable, Optional, Tuple
 import torch
 from torch import nn
 from vllm.config import VllmConfig
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 from .config import GLiNERRerankConfig
 
@@ -123,7 +124,7 @@ class GLiNERRerankModel(nn.Module):
 
         from .pooler import GLiNERRerankPooler
 
-        self.pooler = GLiNERRerankPooler(self)
+        self.pooler = VllmPoolerAdapter(GLiNERRerankPooler(self), requires_token_ids=True)
 
     def embed_input_ids(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         return self.backbone.embeddings.tok_embeddings(input_ids)

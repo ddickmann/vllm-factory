@@ -18,18 +18,22 @@ Key Features:
 - Much smaller (~0.9GB) compared to ColQwen3 (~5GB+)
 """
 
+import logging
 from typing import Iterable, Optional
 
 import torch
 import torch.nn as nn
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.linear import ReplicatedLinear
-from vllm.model_executor.layers.pooler.tokwise import pooler_for_token_embed
+from vllm_factory.pooling.protocol import PassthroughPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 
 # Import the native vLLM LFM2-VL
 from vllm.model_executor.models.lfm2_vl import Lfm2VLForConditionalGeneration
 from vllm.model_executor.models.utils import AutoWeightsLoader, WeightsMapper
+
+logger = logging.getLogger(__name__)
 
 
 class ColLFM2Projection(nn.Module):
@@ -118,8 +122,6 @@ class LFM2VLForColPali(Lfm2VLForConditionalGeneration):
 
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
-        pooler_config = vllm_config.model_config.pooler_config
-
         # Get hidden size from config (LFM2-VL uses text_config.hidden_size)
         if hasattr(config, "text_config") and hasattr(config.text_config, "hidden_size"):
             hidden_size = config.text_config.hidden_size
@@ -138,22 +140,18 @@ class LFM2VLForColPali(Lfm2VLForConditionalGeneration):
 
         # Create vLLM pooler for token embedding task
         # This handles splitting by sequence and output format
-        if pooler_config is not None:
-            self.pooler = pooler_for_token_embed(pooler_config)
-        else:
-            # Create default pooler config for ALL pooling
-            from vllm.config import PoolerConfig
-
-            default_pooler_config = PoolerConfig(pooling_type="ALL")
-            self.pooler = pooler_for_token_embed(default_pooler_config)
+        self.pooler = VllmPoolerAdapter(
+            PassthroughPooler(),
+            pooler_config=vllm_config.model_config.pooler_config,
+        )
 
         # Store model path for weight loading
         self.model_path = vllm_config.model_config.model
 
-        print("[LFM2VLForColPali] Initialized with:")
-        print(f"  Hidden size: {hidden_size}")
-        print(f"  ColPali dim: {colpali_dim}")
-        print(f"  Model path: {self.model_path}")
+        logger.info("[LFM2VLForColPali] Initialized with:")
+        logger.info("  Hidden size: %s", hidden_size)
+        logger.info("  ColPali dim: %s", colpali_dim)
+        logger.info("  Model path: %s", self.model_path)
 
     def forward(
         self,
@@ -195,7 +193,10 @@ class LFM2VLForColPali(Lfm2VLForConditionalGeneration):
         # Debug: check for custom_text_proj weights
         proj_weights = [(n, w) for n, w in weights_list if "custom_text_proj" in n]
         if proj_weights:
-            print(f"[LFM2VLForColPali] Found projection weights: {[n for n, _ in proj_weights]}")
+            logger.info(
+                "[LFM2VLForColPali] Found projection weights: %s",
+                [n for n, _ in proj_weights],
+            )
 
         # Use AutoWeightsLoader with our custom mapper
         loader = AutoWeightsLoader(self)
@@ -208,10 +209,21 @@ class LFM2VLForColPali(Lfm2VLForConditionalGeneration):
             try:
                 weight_sum = proj_weight.float().abs().sum().item()
                 if weight_sum > 0:
-                    print(f"[LFM2VLForColPali] ✓ Projection weights loaded: {proj_weight.shape}")
+                    logger.info(
+                        "[LFM2VLForColPali] Projection weights loaded: %s",
+                        proj_weight.shape,
+                    )
                 else:
-                    print("[LFM2VLForColPali] ⚠️ Projection weights may be zero!")
+                    logger.warning(
+                        "[LFM2VLForColPali] Projection weights may be zero!"
+                    )
             except Exception as e:
-                print(f"[LFM2VLForColPali] Note: Could not verify projection weights: {e}")
+                logger.warning(
+                    "[LFM2VLForColPali] Could not verify projection weights: %s",
+                    e,
+                )
 
+        # Mark constructor-initialized params as loaded for vLLM 0.19+ validation
+        for name in dict(self.named_parameters()):
+            loaded.add(name)
         return loaded

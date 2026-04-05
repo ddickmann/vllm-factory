@@ -173,7 +173,7 @@ def phase_test():
     from vllm import LLM, PoolingParams
     from vllm.inputs import TokensPrompt
 
-    from deberta_gliner2.processor import (
+    from plugins.deberta_gliner2.processor import (
         build_schema_for_classification,
         build_schema_for_entities,
         build_schema_for_json,
@@ -197,6 +197,8 @@ def phase_test():
     print("\n--- TEST 1: Entity Extraction ---")
     schema = build_schema_for_entities(ENTITY_LABELS)
     prep = preprocess(tokenizer, TEXT, schema)
+    prompt_ids = prep["input_ids"]
+    prep = {k: v for k, v in prep.items() if k != "input_ids"}
 
     vllm_model = LLM(
         model=LOCAL_MODEL_DIR,
@@ -204,22 +206,32 @@ def phase_test():
         enforce_eager=True,
         dtype="bfloat16",
         enable_prefix_caching=False,
+        enable_chunked_prefill=False,
+        gpu_memory_utilization=0.78,
     )
 
-    prompt = TokensPrompt(prompt_token_ids=prep["input_ids"])
-    pooling_params = PoolingParams(extra_kwargs=prep)
+    prompt = TokensPrompt(prompt_token_ids=prompt_ids)
+    pooling_params = PoolingParams(task="plugin", extra_kwargs=prep)
 
     # Warmup
-    _ = vllm_model.embed([prompt], pooling_params=pooling_params)
+    _ = vllm_model.encode(
+        [prompt],
+        pooling_params=pooling_params,
+        pooling_task="plugin",
+    )
 
     # Timed run
     N = 5
     t0 = time.perf_counter()
     for _ in range(N):
-        outputs = vllm_model.embed([prompt], pooling_params=pooling_params)
+        outputs = vllm_model.encode(
+            [prompt],
+            pooling_params=pooling_params,
+            pooling_task="plugin",
+        )
     latency = (time.perf_counter() - t0) / N * 1000
 
-    raw = outputs[0].outputs.embedding
+    raw = outputs[0].outputs.data
     result = decode_output(raw, schema)
     formatted = format_results(result, include_confidence=True)
     print(f"vLLM output: {json.dumps(formatted, indent=2, default=str)}")
@@ -272,9 +284,14 @@ def phase_test():
     )
     cls_prep = preprocess(tokenizer, TEXT, cls_schema)
     cls_prompt = TokensPrompt(prompt_token_ids=cls_prep["input_ids"])
-    cls_pp = PoolingParams(extra_kwargs=cls_prep)
-    cls_out = vllm_model.embed([cls_prompt], pooling_params=cls_pp)
-    cls_result = decode_output(cls_out[0].outputs.embedding, cls_schema)
+    cls_prep = {k: v for k, v in cls_prep.items() if k != "input_ids"}
+    cls_pp = PoolingParams(task="plugin", extra_kwargs=cls_prep)
+    cls_out = vllm_model.encode(
+        [cls_prompt],
+        pooling_params=cls_pp,
+        pooling_task="plugin",
+    )
+    cls_result = decode_output(cls_out[0].outputs.data, cls_schema)
     cls_formatted = format_results(cls_result, include_confidence=True)
     print(f"vLLM: {json.dumps(cls_formatted, indent=2, default=str)}")
 
@@ -297,9 +314,14 @@ def phase_test():
     rel_schema = build_schema_for_relations(["works_at", "reports_to"])
     rel_prep = preprocess(tokenizer, TEXT, rel_schema)
     rel_prompt = TokensPrompt(prompt_token_ids=rel_prep["input_ids"])
-    rel_pp = PoolingParams(extra_kwargs=rel_prep)
-    rel_out = vllm_model.embed([rel_prompt], pooling_params=rel_pp)
-    rel_result = decode_output(rel_out[0].outputs.embedding, rel_schema)
+    rel_prep = {k: v for k, v in rel_prep.items() if k != "input_ids"}
+    rel_pp = PoolingParams(task="plugin", extra_kwargs=rel_prep)
+    rel_out = vllm_model.encode(
+        [rel_prompt],
+        pooling_params=rel_pp,
+        pooling_task="plugin",
+    )
+    rel_result = decode_output(rel_out[0].outputs.data, rel_schema)
     rel_formatted = format_results(rel_result, include_confidence=True)
     print(f"vLLM: {json.dumps(rel_formatted, indent=2, default=str)}")
 
@@ -312,9 +334,14 @@ def phase_test():
     )
     json_prep = preprocess(tokenizer, TEXT, json_schema)
     json_prompt = TokensPrompt(prompt_token_ids=json_prep["input_ids"])
-    json_pp = PoolingParams(extra_kwargs=json_prep)
-    json_out = vllm_model.embed([json_prompt], pooling_params=json_pp)
-    json_result = decode_output(json_out[0].outputs.embedding, json_schema)
+    json_prep = {k: v for k, v in json_prep.items() if k != "input_ids"}
+    json_pp = PoolingParams(task="plugin", extra_kwargs=json_prep)
+    json_out = vllm_model.encode(
+        [json_prompt],
+        pooling_params=json_pp,
+        pooling_task="plugin",
+    )
+    json_result = decode_output(json_out[0].outputs.data, json_schema)
     json_formatted = format_results(json_result, include_confidence=True)
     print(f"vLLM: {json.dumps(json_formatted, indent=2, default=str)}")
 

@@ -5,18 +5,26 @@ P ?= moderncolbert
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install vllm-factory with all deps (vLLM installed last)
+install: ## Install vllm-factory with all deps
+	pip install -e ".[gliner]"
+	pip install vllm
+	@python -m vllm_factory.compat.doctor
+
+install-minimal: ## Install without GLiNER deps
+	pip install -e .
+	pip install vllm
+	@python -m vllm_factory.compat.doctor
+
+install-legacy: ## Install pinned to vLLM 0.15.1 with pooling patch
 	pip install -e ".[gliner]"
 	pip install "vllm==0.15.1"
 	python -m forge.patches.pooling_extra_kwargs
 
-install-minimal: ## Install without GLiNER deps (vLLM installed last)
-	pip install -e .
-	pip install "vllm==0.15.1"
+patch: ## Apply legacy vLLM 0.15.x pooling patch (only needed if doctor says so)
 	python -m forge.patches.pooling_extra_kwargs
 
-patch: ## Apply required vLLM pooling patch
-	python -m forge.patches.pooling_extra_kwargs
+doctor: ## Run environment diagnostics
+	python -m vllm_factory.compat.doctor
 
 test: ## Run offline parity test for a plugin (P=name)
 	python plugins/$(P)/parity_test.py
@@ -57,11 +65,11 @@ serve: ## Serve a plugin with IOProcessor (P=name, PORT=8000)
 		--io-processor-plugin $$IO_PLUGIN --port $${PORT:-8000}
 
 lint: ## Run ruff linter
-	ruff check forge/ plugins/ kernels/ poolers/ --select E,F,I,W --ignore E501
+	ruff check forge/ plugins/ kernels/ poolers/ vllm_factory/ --select E,F,I,W --ignore E501
 
 ci-test: ## Run local CI-equivalent checks
-	ruff check forge/ plugins/ kernels/ poolers/ --select E,F,I,W --ignore E501
-	python -m compileall forge models poolers kernels plugins
+	ruff check forge/ plugins/ kernels/ poolers/ vllm_factory/ --select E,F,I,W --ignore E501
+	python -m compileall forge models poolers kernels plugins vllm_factory
 
 clean: ## Remove build artifacts and caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

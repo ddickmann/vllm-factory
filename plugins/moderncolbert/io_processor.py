@@ -18,7 +18,6 @@ Request format (offline):
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -26,12 +25,12 @@ from typing import Any
 import torch
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
-from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
-from vllm.inputs import TokensPrompt
-from vllm.inputs.data import PromptType
-from vllm.outputs import PoolingRequestOutput
-from vllm.plugins.io_processors.interface import IOProcessor
-from vllm.pooling_params import PoolingParams
+from vllm_factory.io.base import (
+    FactoryIOProcessor,
+    PoolingRequestOutput,
+    PromptType,
+    TokensPrompt,
+)
 
 QUERY_PREFIX_ID = 50368  # [Q] with trailing space
 DOC_PREFIX_ID = 50369  # [D] with trailing space
@@ -45,23 +44,22 @@ class ModernColBERTInput:
     is_query: bool = True
 
 
-class ModernColBERTIOProcessor(IOProcessor[ModernColBERTInput, list[float]]):
+class ModernColBERTIOProcessor(FactoryIOProcessor):
     """IOProcessor for ModernColBERT — multi-vector late-interaction embeddings.
 
     Data flow:
         IOProcessorRequest(data={text, is_query})
-        → parse_request → ModernColBERTInput
-        → pre_process   → TokensPrompt (with [Q]/[D] prefix at position 1)
-        → validate_or_generate_params → PoolingParams(task="token_embed", extra_kwargs={...})
-        → engine.encode  → PoolingRequestOutput
-        → post_process   → list[float] (flattened multi-vector embeddings)
-        → output_to_response → IOProcessorResponse(data=[...])
+        → factory_parse        → ModernColBERTInput
+        → factory_pre_process  → TokensPrompt (with [Q]/[D] prefix at position 1)
+        → merge_pooling_params → PoolingParams(task="plugin", extra_kwargs={...})
+        → engine.encode        → PoolingRequestOutput
+        → factory_post_process → base64-encoded flattened multi-vector embeddings
     """
 
-    def __init__(self, vllm_config: VllmConfig):
-        super().__init__(vllm_config)
-        self._lock = threading.Lock()
-        self._pending_extra_kwargs: dict | None = None
+    pooling_task = "token_embed"
+
+    def __init__(self, vllm_config: VllmConfig, *args, **kwargs):
+        super().__init__(vllm_config, *args, **kwargs)
 
         model_id = vllm_config.model_config.model
         self._tokenizer = AutoTokenizer.from_pretrained(
@@ -70,13 +68,11 @@ class ModernColBERTIOProcessor(IOProcessor[ModernColBERTInput, list[float]]):
             trust_remote_code=True,
         )
 
-    def parse_request(self, request: Any) -> ModernColBERTInput:
-        if hasattr(request, "data"):
-            data = request.data
-        elif isinstance(request, dict) and "data" in request:
-            data = request["data"]
-        else:
-            data = request
+    def factory_parse(self, data: Any) -> ModernColBERTInput:
+        if hasattr(data, "data"):
+            data = data.data
+        elif isinstance(data, dict) and "data" in data:
+            data = data["data"]
 
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict with 'text' key, got {type(data)}")
@@ -87,18 +83,17 @@ class ModernColBERTIOProcessor(IOProcessor[ModernColBERTInput, list[float]]):
         is_query = bool(data.get("is_query", True))
         return ModernColBERTInput(text=data["text"], is_query=is_query)
 
-    def pre_process(
+    def factory_pre_process(
         self,
-        prompt: ModernColBERTInput,
-        request_id: str | None = None,
-        **kwargs,
+        parsed_input: ModernColBERTInput,
+        request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
-        is_query = prompt.is_query
+        is_query = parsed_input.is_query
         max_len = 256 if is_query else 8192
         prefix_id = QUERY_PREFIX_ID if is_query else DOC_PREFIX_ID
 
         tokens = self._tokenizer(
-            prompt.text,
+            parsed_input.text,
             add_special_tokens=True,
             truncation=True,
             max_length=max_len - 1,
@@ -115,32 +110,14 @@ class ModernColBERTIOProcessor(IOProcessor[ModernColBERTInput, list[float]]):
             "input_ids": input_ids,
         }
 
-        with self._lock:
-            self._pending_extra_kwargs = extra
+        self._stash(extra_kwargs=extra)
 
         return TokensPrompt(prompt_token_ids=input_ids)
 
-    def validate_or_generate_params(
-        self,
-        params: PoolingParams | None = None,
-    ) -> PoolingParams:
-        with self._lock:
-            extra = self._pending_extra_kwargs
-            self._pending_extra_kwargs = None
-
-        if params is not None and extra is not None:
-            params.extra_kwargs = extra
-            if params.task is None:
-                params.task = "token_embed"
-            return params
-
-        return PoolingParams(task="token_embed", extra_kwargs=extra)
-
-    def post_process(
+    def factory_post_process(
         self,
         model_output: Sequence[PoolingRequestOutput],
-        request_id: str | None = None,
-        **kwargs,
+        request_meta: Any,
     ) -> str:
         import base64
 
@@ -158,12 +135,6 @@ class ModernColBERTIOProcessor(IOProcessor[ModernColBERTInput, list[float]]):
         return base64.b64encode(
             raw.cpu().contiguous().to(torch.float32).numpy().tobytes()
         ).decode("ascii")
-
-    def output_to_response(
-        self,
-        plugin_output: str,
-    ) -> IOProcessorResponse:
-        return IOProcessorResponse(data=plugin_output)
 
 
 def get_processor_cls() -> str:

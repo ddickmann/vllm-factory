@@ -105,6 +105,43 @@ def _fused_rope_kernel(
     tl.store(out_ptrs, out, mask=mask_bsh[:, None] & mask_dim[None, :])
 
 
+def fused_rope_apply(
+    x: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+) -> torch.Tensor:
+    """Apply RoPE to a single `[B, S, H, D]` tensor."""
+
+    batch_size, seq_len, num_heads, head_dim = x.shape
+
+    # Handle broadcasting for cos/sin
+    if cos.dim() == 4:  # [batch, 1, seq_len, head_dim]
+        cos = cos.squeeze(1)
+    if sin.dim() == 4:
+        sin = sin.squeeze(1)
+
+    # Flatten to [batch * seq_len * num_heads, head_dim] for kernel
+    x_flat = x.reshape(-1, head_dim).contiguous()
+    x_out = torch.empty_like(x_flat)
+
+    # Grid dimensions
+    def grid(meta):
+        return (
+            triton.cdiv(batch_size * seq_len * num_heads, meta['BLOCK_SIZE_M']),
+            triton.cdiv(head_dim, meta['BLOCK_SIZE_N']),
+        )
+
+    _fused_rope_kernel[grid](
+        x_flat, cos, sin, x_out,
+        batch_size, seq_len, num_heads, head_dim,
+        x_flat.stride(0), x_flat.stride(1),
+        cos.stride(0), cos.stride(1), cos.stride(2),
+        sin.stride(0), sin.stride(1), sin.stride(2),
+    )
+
+    return x_out.view(batch_size, seq_len, num_heads, head_dim)
+
+
 def fused_rope_global_apply(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -123,49 +160,8 @@ def fused_rope_global_apply(
     Returns:
         Tuple of (rotated_q, rotated_k)
     """
-    batch_size, seq_len, num_heads, head_dim = q.shape
-
-    # Handle broadcasting for cos/sin
-    if cos.dim() == 4:  # [batch, 1, seq_len, head_dim]
-        cos = cos.squeeze(1)
-    if sin.dim() == 4:
-        sin = sin.squeeze(1)
-
-    # Flatten to [batch * seq_len * num_heads, head_dim] for kernel
-    q_flat = q.reshape(-1, head_dim).contiguous()
-    k_flat = k.reshape(-1, head_dim).contiguous()
-
-    q_out = torch.empty_like(q_flat)
-    k_out = torch.empty_like(k_flat)
-
-    # Grid dimensions
-    def grid(meta):
-        return (
-            triton.cdiv(batch_size * seq_len * num_heads, meta['BLOCK_SIZE_M']),
-            triton.cdiv(head_dim, meta['BLOCK_SIZE_N']),
-        )
-
-    # Apply RoPE to Q
-    _fused_rope_kernel[grid](
-        q_flat, cos, sin, q_out,
-        batch_size, seq_len, num_heads, head_dim,
-        q_flat.stride(0), q_flat.stride(1),
-        cos.stride(0), cos.stride(1), cos.stride(2),
-        sin.stride(0), sin.stride(1), sin.stride(2),
-    )
-
-    # Apply RoPE to K
-    _fused_rope_kernel[grid](
-        k_flat, cos, sin, k_out,
-        batch_size, seq_len, num_heads, head_dim,
-        k_flat.stride(0), k_flat.stride(1),
-        cos.stride(0), cos.stride(1), cos.stride(2),
-        sin.stride(0), sin.stride(1), sin.stride(2),
-    )
-
-    # Reshape back to original shape
-    q_rotated = q_out.view(batch_size, seq_len, num_heads, head_dim)
-    k_rotated = k_out.view(batch_size, seq_len, num_heads, head_dim)
+    q_rotated = fused_rope_apply(q, cos, sin)
+    k_rotated = fused_rope_apply(k, cos, sin)
 
     return q_rotated, k_rotated
 

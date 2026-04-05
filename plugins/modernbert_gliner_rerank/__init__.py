@@ -127,11 +127,7 @@ def get_model_path() -> str:
 
 def register() -> None:
     from forge.registration import register_plugin
-    from plugins.deberta_gliner_linker.vllm_pooling_attention_mask import (
-        apply_pooling_attention_mask_patch,
-    )
 
-    apply_pooling_attention_mask_patch()
     register_plugin(
         "modernbert_gliner_rerank",
         GLiNERRerankConfig,

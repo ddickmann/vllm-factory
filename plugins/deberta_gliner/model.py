@@ -14,6 +14,7 @@ vLLM 0.15.x compatible:
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
@@ -24,8 +25,11 @@ from transformers import DebertaV2Config
 from vllm.config import VllmConfig
 
 from poolers.gliner import GLiNERSpanPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 from .config import GLiNERDebertaV2Config
+
+logger = logging.getLogger(__name__)
 
 # Load the custom DeBERTa v2 encoder with Flash DeBERTa Triton kernel
 _ENCODER_PATH = (
@@ -100,7 +104,8 @@ class GLiNERDebertaV2Model(nn.Module):
 
         # 3. GLiNER span pooler (shared implementation)
         pooler_cfg = _make_pooler_config(cfg)
-        self.pooler = GLiNERSpanPooler(pooler_cfg)
+        self._business_pooler = GLiNERSpanPooler(pooler_cfg)
+        self.pooler = VllmPoolerAdapter(self._business_pooler, requires_token_ids=True)
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Required by vLLM's pooling runner for embedding lookup."""
@@ -164,11 +169,10 @@ class GLiNERDebertaV2Model(nn.Module):
         pooler_state = {}
         projection_state = {}
 
-        vllm_pooler = self.pooler.state_dict()
+        pooler_keys = set(self._business_pooler.state_dict().keys())
 
         for hf_name, tensor in weights:
             if hf_name.startswith(backbone_prefix):
-                # Strip GLiNER prefix, re-add 'deberta.' prefix for custom encoder
                 hf_key = hf_name[len(backbone_prefix) :]
                 backbone_weights.append(("deberta." + hf_key, tensor))
 
@@ -185,12 +189,14 @@ class GLiNERDebertaV2Model(nn.Module):
                 elif hf_name.startswith(prompt_rep_prefix):
                     vllm_key = hf_name.replace(prompt_rep_prefix, "prompt_proj.")
 
-                if vllm_key in vllm_pooler:
+                if vllm_key in pooler_keys:
                     pooler_state[vllm_key] = tensor
 
         # Load backbone via custom encoder's load_weights (handles key remapping)
         self.model.load_weights(backbone_weights)
-        print(f"[GLiNERDebertaV2] Loaded backbone: {len(backbone_weights)} weight tensors")
+        logger.info(
+            "[GLiNERDebertaV2] Loaded backbone: %s weight tensors", len(backbone_weights)
+        )
 
         # Load projection
         if self.projection is not None and projection_state:
@@ -198,17 +204,24 @@ class GLiNERDebertaV2Model(nn.Module):
             device = next(self.model.parameters()).device
             dtype = self.vllm_config.model_config.dtype
             self.projection.to(device=device, dtype=dtype)
-            print(f"[GLiNERDebertaV2] Loaded projection: {list(projection_state.keys())}")
+            logger.info(
+                "[GLiNERDebertaV2] Loaded projection: %s",
+                list(projection_state.keys()),
+            )
 
-        # Load pooler
+        # Load pooler (use business pooler directly to avoid _inner. prefix mismatch)
         if pooler_state:
-            self.pooler.load_state_dict(pooler_state, strict=False)
+            self._business_pooler.load_state_dict(pooler_state, strict=False)
             device = next(self.model.parameters()).device
             dtype = self.vllm_config.model_config.dtype
-            self.pooler.to(device=device, dtype=dtype)
-            print(f"[GLiNERDebertaV2] Loaded pooler: {len(pooler_state)}/{len(vllm_pooler)} keys")
+            self._business_pooler.to(device=device, dtype=dtype)
+            logger.info(
+                "[GLiNERDebertaV2] Loaded pooler: %s/%s keys",
+                len(pooler_state),
+                len(pooler_keys),
+            )
         else:
-            print("[GLiNERDebertaV2] WARNING: No pooler weights loaded!")
+            logger.warning("[GLiNERDebertaV2] No pooler weights loaded!")
 
         return set(name for name, _ in self.named_parameters())
 

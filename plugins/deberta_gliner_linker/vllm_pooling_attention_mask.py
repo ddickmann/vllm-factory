@@ -1,12 +1,28 @@
 """
-Plumb PoolingParams.extra_kwargs[\"attention_mask\"] into model forward for pooling models.
+Plumb PoolingParams.extra_kwargs["attention_mask"] into model forward for pooling models.
 
-vLLM's GpuModelRunner only merges ``compressed_token_type_ids`` from ``extra_kwargs`` into
-``model_kwargs`` by default. For GLiNER-Linker, the collator's attention mask must reach
-``DebertaEncoderModel`` so padded batches (tokenizer padding + vLLM max-prompt padding with
-``vocab_size`` fillers) do not attend through pad positions.
+WHY THIS PATCH EXISTS
+---------------------
+vLLM 0.19's V1 ``GPUModelRunner._preprocess`` only merges
+``compressed_token_type_ids`` from ``extra_kwargs`` into ``model_kwargs``.
+For GLiNER-Linker (and potentially other encoder models with mixed-length
+label+text sequences), the collator's per-token attention mask must reach
+``DebertaEncoderModel.forward()`` so that padded positions are excluded from
+self-attention. Without this patch, DeBERTa treats padding tokens as valid
+input, producing incorrect hidden states and entity scores.
 
-This module monkey-patches ``GpuModelRunner._preprocess`` once (idempotent).
+PATCH CHARACTERISTICS
+---------------------
+- Idempotent: guarded by ``_PATCH_ATTR``; safe to call multiple times.
+- Scoped: applied inside ``GLiNERLinkerModel.__init__``, not at import time.
+- Narrowly targeted: only affects pooling models that provide attention_mask.
+- Single coupling point: only file in vllm-factory modifying GPUModelRunner.
+
+UPSTREAM RESOLUTION
+-------------------
+Remove once vLLM forwards all ``extra_kwargs`` keys into ``model_kwargs``
+in ``GPUModelRunner._preprocess``, or provides a first-class mechanism for
+custom pooling models to receive per-request metadata in model forward.
 """
 
 from __future__ import annotations
@@ -81,6 +97,11 @@ def _make_patched_preprocess(orig_preprocess):
             return out
         try:
             am = _build_flat_attention_mask(self, scheduler_output, int(input_ids.shape[0]))
+        except (ValueError, IndexError) as exc:
+            logger.debug(
+                "attention_mask patch skipped for this batch: %s", exc
+            )
+            am = None
         except Exception:
             logger.exception("GLiNER-Linker: failed to build attention_mask for pooling batch")
             raise

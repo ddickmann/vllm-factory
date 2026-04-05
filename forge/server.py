@@ -30,7 +30,7 @@ import time
 from typing import Dict, List, Optional
 
 from forge.model_prep import get_gliner_base_model_name, prepare_model_for_vllm_if_needed
-from forge.preflight import require_pooling_patch_ready, require_runtime_compatibility
+from forge.preflight import require_native_io_path, require_runtime_compatibility
 
 logger = logging.getLogger("vllm-factory.server")
 
@@ -44,8 +44,14 @@ class ModelServer:
     Why server mode?
     - vLLM's server mode is the primary production deployment path
     - Plugins auto-register via entry points on import
-    - The /pooling endpoint requires the server (with our patch for extra_kwargs)
+    - The /pooling endpoint is the primary contract for vllm-factory plugins
     - Server process isolation prevents model loading from blocking callers
+
+    Transport selection:
+    - On vLLM versions with native IOProcessor support the server runs
+      without any site-packages patching.
+    - On legacy 0.15.x the pooling patch is applied automatically when
+      the native path is unavailable.
 
     Example:
         server = ModelServer(
@@ -56,7 +62,7 @@ class ModelServer:
             trust_remote_code=True,
         )
         server.start()  # Blocks until healthy
-        # Now POST to http://localhost:8001/v1/embeddings
+        # Now POST to http://localhost:8001/pooling
     """
 
     def __init__(
@@ -213,8 +219,7 @@ class ModelServer:
             logger.warning(f"[{self.name}] Server already running, skipping start")
             return
 
-        # Enforce patch health for pooling server mode.
-        require_pooling_patch_ready()
+        require_native_io_path()
         require_runtime_compatibility()
         self._resolve_model_for_server()
 

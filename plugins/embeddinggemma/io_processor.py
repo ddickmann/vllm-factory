@@ -20,12 +20,12 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
-from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
-from vllm.inputs import TokensPrompt
-from vllm.inputs.data import PromptType
-from vllm.outputs import PoolingRequestOutput
-from vllm.plugins.io_processors.interface import IOProcessor
-from vllm.pooling_params import PoolingParams
+from vllm_factory.io.base import (
+    FactoryIOProcessor,
+    PoolingRequestOutput,
+    PromptType,
+    TokensPrompt,
+)
 
 TASK_PROMPTS = {
     "query": "task: search result | query: ",
@@ -53,21 +53,20 @@ class EmbeddingGemmaInput:
     task: str = "query"
 
 
-class EmbeddingGemmaIOProcessor(IOProcessor[EmbeddingGemmaInput, list[float]]):
+class EmbeddingGemmaIOProcessor(FactoryIOProcessor):
     """IOProcessor for EmbeddingGemma — unsloth/embeddinggemma-300m.
 
     Data flow:
         IOProcessorRequest(data={text, task?})
-        → parse_request → EmbeddingGemmaInput
-        → pre_process   → TokensPrompt(prompt_token_ids=...)
-        → validate_or_generate_params → PoolingParams()
-        → engine.embed   → PoolingRequestOutput
-        → post_process   → list[float] (dense embedding)
-        → output_to_response → IOProcessorResponse(data=[...])
+        → factory_parse        → EmbeddingGemmaInput
+        → factory_pre_process  → TokensPrompt(prompt_token_ids=...)
+        → merge_pooling_params → PoolingParams(task="plugin")
+        → engine.embed         → PoolingRequestOutput
+        → factory_post_process → list[float] (dense embedding)
     """
 
-    def __init__(self, vllm_config: VllmConfig):
-        super().__init__(vllm_config)
+    def __init__(self, vllm_config: VllmConfig, *args, **kwargs):
+        super().__init__(vllm_config, *args, **kwargs)
         from transformers import AutoTokenizer
 
         model_name = vllm_config.model_config.model
@@ -78,13 +77,11 @@ class EmbeddingGemmaIOProcessor(IOProcessor[EmbeddingGemmaInput, list[float]]):
         )
         self.max_length = 2048
 
-    def parse_request(self, request: Any) -> EmbeddingGemmaInput:
-        if hasattr(request, "data"):
-            data = request.data
-        elif isinstance(request, dict) and "data" in request:
-            data = request["data"]
-        else:
-            data = request
+    def factory_parse(self, data: Any) -> EmbeddingGemmaInput:
+        if hasattr(data, "data"):
+            data = data.data
+        elif isinstance(data, dict) and "data" in data:
+            data = data["data"]
 
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict with 'text' key, got {type(data)}")
@@ -98,14 +95,13 @@ class EmbeddingGemmaIOProcessor(IOProcessor[EmbeddingGemmaInput, list[float]]):
 
         return EmbeddingGemmaInput(text=data["text"], task=task)
 
-    def pre_process(
+    def factory_pre_process(
         self,
-        prompt: EmbeddingGemmaInput,
-        request_id: str | None = None,
-        **kwargs,
+        parsed_input: EmbeddingGemmaInput,
+        request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
-        prefix = TASK_PROMPTS[prompt.task]
-        full_text = prefix + prompt.text
+        prefix = TASK_PROMPTS[parsed_input.task]
+        full_text = prefix + parsed_input.text
         tokens = self._tokenizer(
             full_text,
             add_special_tokens=True,
@@ -116,19 +112,10 @@ class EmbeddingGemmaIOProcessor(IOProcessor[EmbeddingGemmaInput, list[float]]):
         )
         return TokensPrompt(prompt_token_ids=tokens["input_ids"])
 
-    def validate_or_generate_params(
-        self,
-        params: PoolingParams | None = None,
-    ) -> PoolingParams:
-        if params is not None:
-            return params
-        return PoolingParams()
-
-    def post_process(
+    def factory_post_process(
         self,
         model_output: Sequence[PoolingRequestOutput],
-        request_id: str | None = None,
-        **kwargs,
+        request_meta: Any,
     ) -> list[float]:
         if not model_output:
             return []
@@ -144,12 +131,6 @@ class EmbeddingGemmaIOProcessor(IOProcessor[EmbeddingGemmaInput, list[float]]):
             return raw
         else:
             return torch.as_tensor(raw).tolist()
-
-    def output_to_response(
-        self,
-        plugin_output: list[float],
-    ) -> IOProcessorResponse:
-        return IOProcessorResponse(data=plugin_output)
 
 
 def get_processor_cls() -> str:

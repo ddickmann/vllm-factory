@@ -9,6 +9,7 @@ from pathlib import Path
 
 DEFAULT_RESULTS_DIR = Path(__file__).parent / "results"
 DEFAULT_CHARTS_DIR = Path(__file__).parent / "charts"
+DEFAULT_AUDIT_RESULTS_DIR = Path(__file__).parent / "results_v019_audit"
 
 
 def _parse_csv_ints(raw: str) -> list[int]:
@@ -22,6 +23,92 @@ def _parse_csv_ints(raw: str) -> list[int]:
 
 def _parse_csv_strings(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _parse_results_path(path: Path):
+    from .results import BenchResult
+
+    if path.is_dir():
+        return BenchResult.load_dir(path)
+    return [BenchResult.from_json(path)]
+
+
+def _latest_by_plugin(results):
+    latest = {}
+    for result in results:
+        current = latest.get(result.plugin)
+        if current is None or result.timestamp > current.timestamp:
+            latest[result.plugin] = result
+    return latest
+
+
+def _sweep_index(result):
+    return {(s.mode, s.concurrency): s for s in result.sweeps}
+
+
+def cmd_compare(args):
+    target_results = _latest_by_plugin(_parse_results_path(Path(args.targets)))
+    current_results = _latest_by_plugin(_parse_results_path(Path(args.current)))
+
+    if args.plugins:
+        plugins = [p for p in args.plugins if p in target_results]
+    else:
+        plugins = sorted(set(target_results) & set(current_results))
+
+    focus_levels = args.focus_levels
+    report = []
+    for plugin in plugins:
+        target = target_results.get(plugin)
+        current = current_results.get(plugin)
+        if target is None or current is None:
+            continue
+
+        target_sweeps = _sweep_index(target)
+        current_sweeps = _sweep_index(current)
+        comparisons = []
+        for mode in args.modes:
+            for concurrency in focus_levels:
+                target_point = target_sweeps.get((mode, concurrency))
+                current_point = current_sweeps.get((mode, concurrency))
+                if target_point is None or current_point is None:
+                    continue
+                comparisons.append(
+                    {
+                        "mode": mode,
+                        "concurrency": concurrency,
+                        "target_throughput_factor": round(target_point.throughput_factor, 2),
+                        "current_throughput_factor": round(current_point.throughput_factor, 2),
+                        "target_vllm_req_per_s": round(target_point.vllm_req_per_s, 1),
+                        "current_vllm_req_per_s": round(current_point.vllm_req_per_s, 1),
+                        "target_vanilla_req_per_s": round(target_point.vanilla_req_per_s, 1),
+                        "current_vanilla_req_per_s": round(current_point.vanilla_req_per_s, 1),
+                        "throughput_factor_delta": round(
+                            current_point.throughput_factor - target_point.throughput_factor,
+                            2,
+                        ),
+                        "vllm_req_per_s_delta": round(
+                            current_point.vllm_req_per_s - target_point.vllm_req_per_s,
+                            1,
+                        ),
+                        "vanilla_req_per_s_delta": round(
+                            current_point.vanilla_req_per_s - target_point.vanilla_req_per_s,
+                            1,
+                        ),
+                    }
+                )
+
+        report.append(
+            {
+                "plugin": plugin,
+                "target_timestamp": target.timestamp,
+                "current_timestamp": current.timestamp,
+                "target_parity_score": target.parity_score,
+                "current_parity_score": current.parity_score,
+                "comparisons": comparisons,
+            }
+        )
+
+    print(json.dumps({"plugins": report}, indent=2))
 
 
 def cmd_run(args):
@@ -182,6 +269,19 @@ def main():
     p_report.add_argument("--results", type=str, default=str(DEFAULT_RESULTS_DIR),
                           help="Path to results dir or single JSON file")
 
+    # --- compare ---
+    p_compare = sub.add_parser("compare", help="Compare current results against historical targets")
+    p_compare.add_argument("--targets", type=str, default=str(DEFAULT_RESULTS_DIR),
+                           help="Target results dir or single JSON file")
+    p_compare.add_argument("--current", type=str, default=str(DEFAULT_AUDIT_RESULTS_DIR),
+                           help="Current results dir or single JSON file")
+    p_compare.add_argument("--focus-levels", type=_parse_csv_ints, default=_parse_csv_ints("16,32,64"),
+                           help="Comma-separated concurrency levels to compare")
+    p_compare.add_argument("--modes", type=_parse_csv_strings, default=_parse_csv_strings("saturate,staggered"),
+                           help="Comma-separated modes to compare")
+    p_compare.add_argument("--plugins", type=_parse_csv_strings, default=None,
+                           help="Optional comma-separated plugin list")
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -190,6 +290,8 @@ def main():
         cmd_chart(args)
     elif args.command == "report":
         cmd_report(args)
+    elif args.command == "compare":
+        cmd_compare(args)
 
 
 if __name__ == "__main__":

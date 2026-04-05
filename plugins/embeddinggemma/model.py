@@ -1,14 +1,18 @@
 """EmbeddingGemma model for vLLM — uses HF's Gemma3TextModel backbone.
 
 Uses HuggingFace's actual model to guarantee numerical parity with
-the SentenceTransformers reference. Pooling uses vLLM's native
-DispatchPooler which auto-loads the ST Dense projection layers:
+the SentenceTransformers reference. Custom EmbeddingGemmaPooler handles
+the post-backbone projection pipeline:
 
   MEAN pooling → Dense1 (768→3072) → Dense2 (3072→768) → L2 normalize
+
+NOTE: Must be run with dtype=float32. Gemma's embedding scale
+(sqrt(hidden_size) ~ 27.7) overflows float16 range, producing NaN.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Tuple
 
@@ -18,22 +22,20 @@ from vllm.config import VllmConfig
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 
 from .config import EmbeddingGemmaConfig
+from .pooler import EmbeddingGemmaPooler
+
+logger = logging.getLogger(__name__)
 
 
 @default_pooling_type(seq_pooling_type="MEAN")
 class EmbeddingGemmaModel(nn.Module):
-    """Gemma3 embedding model using HF backbone + vLLM DispatchPooler.
+    """Gemma3 embedding model using HF backbone + EmbeddingGemmaPooler.
 
     Pipeline mirrors SentenceTransformers exactly:
       HF Gemma3TextModel → MEAN pool → Dense1 → Dense2 → L2 normalize
 
-    Since is_pooling_model=True, vLLM's as_embedding_model() adapter
-    skips wrapping and expects self.pooler to exist. We create it using
-    vLLM's DispatchPooler.for_embedding() which auto-loads the Dense
-    layers from the HF repo and applies L2 normalization.
-
     NOTE: Must be run with dtype=float32. Gemma's embedding scale
-    (sqrt(hidden_size) ≈ 27.7) overflows float16 range, producing NaN.
+    (sqrt(hidden_size) ~ 27.7) overflows float16 range, producing NaN.
     """
 
     is_pooling_model = True
@@ -53,10 +55,14 @@ class EmbeddingGemmaModel(nn.Module):
         )
         self.backbone.eval()
 
-        from vllm.model_executor.layers.pooler import DispatchPooler
+        from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
-        pooler_config = vllm_config.model_config.pooler_config
-        self.pooler = DispatchPooler.for_embedding(pooler_config)
+        self._business_pooler = EmbeddingGemmaPooler(
+            hidden_size=config.hidden_size,
+            dtype=torch.float32,
+        )
+        self.pooler = VllmPoolerAdapter(self._business_pooler)
+        self._load_dense_weights(config._name_or_path)
 
     def forward(
         self, input_ids, positions, intermediate_tensors=None, inputs_embeds=None, **kwargs
@@ -73,8 +79,36 @@ class EmbeddingGemmaModel(nn.Module):
 
         return outputs.last_hidden_state.squeeze(0)
 
+    def _load_dense_weights(self, model_name_or_path: str) -> None:
+        """Load SentenceTransformers Dense projection weights from HF repo."""
+        try:
+            from huggingface_hub import hf_hub_download
+            import safetensors.torch
+        except ImportError:
+            logger.warning("huggingface_hub or safetensors not available; "
+                           "Dense projection weights not loaded")
+            return
+
+        for layer_idx, layer_name, attr in [
+            (2, "2_Dense", "dense1"),
+            (3, "3_Dense", "dense2"),
+        ]:
+            try:
+                path = hf_hub_download(model_name_or_path,
+                                       f"{layer_name}/model.safetensors")
+                state = safetensors.torch.load_file(path)
+                linear = getattr(self._business_pooler, attr)
+                if "linear.weight" in state:
+                    linear.weight.data.copy_(state["linear.weight"])
+                    logger.info("Loaded %s from %s", attr, layer_name)
+            except Exception as exc:
+                logger.warning("Could not load %s weights: %s", attr, exc)
+
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]) -> set[str]:
         """Backbone loaded via from_pretrained; consume weight iterator."""
         for _, _ in weights:
             pass
-        return set(name for name, _ in self.named_parameters())
+        loaded = set()
+        for name in dict(self.named_parameters()):
+            loaded.add(name)
+        return loaded

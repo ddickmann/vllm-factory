@@ -5,23 +5,24 @@
 | Component | Supported | Notes |
 |---|---|---|
 | Python | 3.11, 3.12 | 3.11 is the primary development baseline |
-| vLLM | 0.15.x | IOProcessor plugins require 0.15.0+; `forge/patches/pooling_extra_kwargs.py` targets 0.15.x |
+| vLLM | 0.19+ | Native IOProcessor and `extra_kwargs` support; no patching required |
 | PyTorch | 2.0+ | Follow vLLM compatibility for pinned versions |
 | OS (dev) | Linux, macOS | Production serving requires Linux + NVIDIA GPU |
 | GPU backend | CUDA (primary) | macOS/CPU only for development validation |
 
-## Installation Order
-
-> **vLLM must be the last package installed.** Other dependencies (especially `gliner`) can pull in `transformers` versions that conflict with vLLM.
+## Installation
 
 ```bash
 pip install -e ".[gliner]"    # base deps + GLiNER
-pip install "vllm==0.15.1"    # vLLM — always last
+pip install vllm               # vLLM >= 0.19 required
 ```
+
+> No special installation order required. The legacy "install vLLM last" constraint
+> from 0.1.x no longer applies.
 
 ## Plugin Compatibility
 
-All 12 plugins are tested with `vllm==0.15.1` using IOProcessor plugins.
+All 12 plugins are tested with `vllm==0.19.0` using the V1 engine with native IOProcessor plugins.
 
 | Plugin | IOProcessor | dtype | Notes |
 |---|---|---|---|
@@ -38,12 +39,21 @@ All 12 plugins are tested with `vllm==0.15.1` using IOProcessor plugins.
 | `deberta_gliner_linker` | `deberta_gliner_linker_io` | bfloat16 | Requires `pip install -e ".[gliner]"` |
 | `modernbert_gliner_rerank` | `modernbert_gliner_rerank_io` | bfloat16 | Requires `pip install -e ".[gliner]"`, uses custom ModernBERT encoder |
 
-## Patch Compatibility
+## Runtime Monkey-Patches (0.2.0)
 
-The pooling patch (`forge/patches/pooling_extra_kwargs.py`) targets vLLM `>=0.15.0` and `<0.16.0`. It enables `extra_kwargs` passthrough and nested tensor responses for custom poolers.
+Two scoped monkey-patches are applied at model initialization time. Both are idempotent and narrowly targeted.
 
-To force on unsupported versions (for experiments only):
+| Patch | Scope | Affects | Purpose |
+|---|---|---|---|
+| `GPUModelRunner._preprocess` | `GLiNERLinkerModel.__init__` | linker + rerank plugins | Forwards `attention_mask` from `extra_kwargs` into model forward |
+| `Attention.get_kv_cache_spec` | `NemotronColEmbedModel.__init__` | `nemotron_colembed` only | Returns `None` for `ENCODER_ONLY` layers to skip KV cache |
+
+These patches will be removed once vLLM provides native support for forwarding arbitrary `extra_kwargs` keys into model forward and for skipping KV cache on encoder-only attention layers.
+
+## Verify Installation
 
 ```bash
-VLLM_FACTORY_ALLOW_UNSUPPORTED_VLLM=1 python -m forge.patches.pooling_extra_kwargs
+python -m vllm_factory.compat.doctor
 ```
+
+This reports the detected vLLM version, native IO mode, and registered plugins.

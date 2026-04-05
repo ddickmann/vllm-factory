@@ -247,6 +247,8 @@ class PluginEntry:
     parity_metric: str = "cosine_sim"
     dataset_label: str = ""
     payload_key: str = "data"
+    request_task: str | None = None
+    vanilla_batch_size: int | None = None
     vanilla_kwargs: dict = field(default_factory=dict)
     prep_fn: Callable | None = field(default=None, repr=False)
 
@@ -268,25 +270,28 @@ def _colbert_flags() -> list[str]:
 
 def _ner_flags() -> list[str]:
     return [
-        "--enforce-eager",
         "--dtype", "bfloat16",
+        "--enforce-eager",
         "--no-enable-prefix-caching",
         "--no-enable-chunked-prefill",
+        "--gpu-memory-utilization", "0.80",
     ]
 
 
 def _embedding_flags() -> list[str]:
     return [
-        "--enforce-eager",
         "--dtype", "bfloat16",
+        "--enforce-eager",
         "--no-enable-prefix-caching",
         "--no-enable-chunked-prefill",
+        "--gpu-memory-utilization", "0.80",
     ]
 
 
 def _colpali_flags() -> list[str]:
     return [
         "--dtype", "bfloat16",
+        "--enforce-eager",
         "--no-enable-prefix-caching",
         "--no-enable-chunked-prefill",
         "--skip-mm-profiling",
@@ -301,12 +306,13 @@ def _colpali_flags() -> list[str]:
 def _nemotron_flags() -> list[str]:
     return [
         "--dtype", "bfloat16",
+        "--enforce-eager",
         "--no-enable-prefix-caching",
         "--no-enable-chunked-prefill",
         "--skip-mm-profiling",
         "--mm-processor-cache-gb", "1",
         "--limit-mm-per-prompt", '{"image": 1}',
-        "--gpu-memory-utilization", "0.90",
+        "--gpu-memory-utilization", "0.80",
         "--max-model-len", "8192",
         "--max-num-batched-tokens", "8192",
     ]
@@ -394,6 +400,7 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="cosine_sim",
         dataset_label="BEIR SciFact 512 docs",
+        request_task="token_embed",
     ),
     PluginEntry(
         plugin_name="colbert_zero",
@@ -406,6 +413,7 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="cosine_sim",
         dataset_label="BEIR SciFact 512 docs",
+        request_task="token_embed",
         vanilla_kwargs={"prompt_name": "document"},
     ),
     PluginEntry(
@@ -419,6 +427,7 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="cosine_sim",
         dataset_label="BEIR SciFact 512 docs",
+        request_task="token_embed",
     ),
     # ---- Vision retrieval (ColPali / ColEmbed) ---- #
     PluginEntry(
@@ -432,6 +441,7 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="cosine_sim",
         dataset_label="DocumentVQA 512 images",
+        request_task="token_embed",
         vanilla_kwargs={"model_class": "ColLFM2"},
     ),
     PluginEntry(
@@ -445,6 +455,7 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="cosine_sim",
         dataset_label="DocumentVQA 512 images",
+        request_task="token_embed",
         vanilla_kwargs={"model_class": "ColQwen3"},
     ),
     PluginEntry(
@@ -458,6 +469,7 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="cosine_sim",
         dataset_label="DocumentVQA 512 images",
+        request_task="token_embed",
     ),
     # ---- NER models ---- #
     PluginEntry(
@@ -471,6 +483,8 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="entity_recall",
         dataset_label="NuNER random 512 samples",
+        request_task="plugin",
+        vanilla_batch_size=1,
         vanilla_kwargs={"hf_model_id": _MT5_GLINER_MODEL_ID},
         prep_fn=_prep_mt5_gliner,
     ),
@@ -497,6 +511,8 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="entity_recall",
         dataset_label="NuNER random 512 samples",
+        request_task="plugin",
+        vanilla_batch_size=1,
         vanilla_kwargs={"hf_model_id": _GLINER2_MODEL_ID},
         prep_fn=_prep_gliner2,
     ),
@@ -511,6 +527,8 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="entity_recall",
         dataset_label="NuNER random 512 samples",
+        request_task="plugin",
+        vanilla_batch_size=1,
         vanilla_kwargs={"hf_model_id": _MMBERT_GLINER_MODEL_ID},
         prep_fn=_prep_mmbert_gliner,
     ),
@@ -525,6 +543,8 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="entity_recall",
         dataset_label="NuNER 512 samples (fixed 5 labels)",
+        request_task="plugin",
+        vanilla_batch_size=1,
         vanilla_kwargs={"hf_model_id": _GLINER_LINKER_MODEL_ID, "layer": "l3"},
         prep_fn=_prep_gliner_linker,
     ),
@@ -539,6 +559,8 @@ REGISTRY: list[PluginEntry] = [
         endpoint="/pooling",
         parity_metric="entity_recall",
         dataset_label="NuNER 512 samples (fixed 5 labels)",
+        request_task="plugin",
+        vanilla_batch_size=1,
         vanilla_kwargs={"hf_model_id": _GLINER_RERANK_MODEL_ID, "layer": "l4"},
         prep_fn=_prep_gliner_rerank,
     ),

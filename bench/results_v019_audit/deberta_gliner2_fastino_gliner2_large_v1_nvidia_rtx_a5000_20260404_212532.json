@@ -1,0 +1,38 @@
+{
+  "plugin": "deberta_gliner2",
+  "model_id": "fastino/gliner2-large-v1",
+  "served_model_id": "/tmp/gliner2-vllm",
+  "gpu": "NVIDIA RTX A5000",
+  "seq_len": 768,
+  "num_requests": 10,
+  "concurrency_levels": [
+    1
+  ],
+  "modes": [
+    "saturate"
+  ],
+  "sweeps": [
+    {
+      "mode": "saturate",
+      "concurrency": 1,
+      "target_arrival_rps": null,
+      "vllm_req_per_s": 38.1,
+      "vllm_p50_ms": 26.9,
+      "vllm_p95_ms": 28.4,
+      "vllm_p99_ms": 28.4,
+      "vanilla_req_per_s": 22.5,
+      "vanilla_p50_ms": 24.3,
+      "vanilla_p95_ms": 228.4,
+      "vanilla_p99_ms": 228.4,
+      "throughput_factor": 1.69,
+      "latency_factor": 0.9
+    }
+  ],
+  "parity_metric": "entity_recall",
+  "parity_score": 1.0,
+  "dataset_label": "NuNER random 512 samples",
+  "timestamp": "2026-04-04T21:25:32.815916+00:00",
+  "dtype": "bfloat16",
+  "vllm_version": "0.19.0",
+  "compat_mode": "native"
+}

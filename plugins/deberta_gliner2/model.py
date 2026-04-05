@@ -7,6 +7,7 @@ Uses custom vLLM-optimized DebertaV2EncoderModel as backbone (Flash DeBERTa Trit
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Iterable, Tuple
@@ -17,8 +18,11 @@ from transformers import DebertaV2Config
 from vllm.config import VllmConfig
 
 from poolers.gliner2 import GLiNER2Pooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 from .config import GLiNER2Config
+
+logger = logging.getLogger(__name__)
 
 # Load the custom DeBERTa v2 encoder with Flash DeBERTa Triton kernel
 _ENCODER_PATH = (
@@ -40,6 +44,8 @@ DebertaV2EncoderModel = _encoder_mod.DebertaV2EncoderModel
 
 class GLiNER2VLLMModel(nn.Module):
     """GLiNER2 model for vLLM: custom vLLM-optimized encoder backbone + GLiNER2 pooler head."""
+
+    is_pooling_model = True
 
     def __init__(self, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
@@ -74,11 +80,12 @@ class GLiNER2VLLMModel(nn.Module):
         self.encoder = DebertaV2EncoderModel(config=encoder_cfg)
 
         # 2. GLiNER2 head (span_rep + count_embed + classifier + count_pred)
-        self.pooler = GLiNER2Pooler(
+        self._business_pooler = GLiNER2Pooler(
             hidden_size=cfg.encoder_hidden_size,
             max_width=cfg.max_width,
             counting_layer=cfg.counting_layer,
         )
+        self.pooler = VllmPoolerAdapter(self._business_pooler, requires_token_ids=True)
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Required by vLLM's pooling runner for embedding lookup."""
@@ -127,7 +134,7 @@ class GLiNER2VLLMModel(nn.Module):
         """
         encoder_prefix = "encoder."
 
-        pooler_state = self.pooler.state_dict()
+        pooler_keys = set(self._business_pooler.state_dict().keys())
 
         backbone_weights = []
         pooler_loaded = {}
@@ -156,21 +163,27 @@ class GLiNER2VLLMModel(nn.Module):
                 backbone_weights.append(("deberta." + hf_key, tensor))
             else:
                 # Pooler weights: span_rep.*, classifier.*, count_pred.*, count_embed.*
-                if hf_name in pooler_state:
+                if hf_name in pooler_keys:
                     pooler_loaded[hf_name] = tensor
 
         # Load backbone via custom encoder's load_weights
         self.encoder.load_weights(backbone_weights)
-        print(f"[GLiNER2] Loaded encoder: {len(backbone_weights)} weight tensors")
+        logger.info(
+            "[GLiNER2] Loaded encoder: %s weight tensors", len(backbone_weights)
+        )
 
-        # Load pooler
+        # Load pooler (use business pooler directly to avoid _inner. prefix mismatch)
         if pooler_loaded:
-            self.pooler.load_state_dict(pooler_loaded, strict=False)
+            self._business_pooler.load_state_dict(pooler_loaded, strict=False)
             device = next(self.encoder.parameters()).device
             dtype = self.vllm_config.model_config.dtype
-            self.pooler.to(device=device, dtype=dtype)
-            print(f"[GLiNER2] Loaded pooler: {len(pooler_loaded)}/{len(pooler_state)} keys")
+            self._business_pooler.to(device=device, dtype=dtype)
+            logger.info(
+                "[GLiNER2] Loaded pooler: %s/%s keys",
+                len(pooler_loaded),
+                len(pooler_keys),
+            )
         else:
-            print("[GLiNER2] WARNING: No pooler weights loaded!")
+            logger.warning("[GLiNER2] WARNING: No pooler weights loaded!")
 
         return set(name for name, _ in self.named_parameters())

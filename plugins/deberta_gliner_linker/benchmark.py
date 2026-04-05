@@ -144,6 +144,7 @@ def benchmark_vllm():
             padding="longest",
         )
         input_ids = tok_result["input_ids"][0]
+        attention_mask = tok_result["attention_mask"][0]
 
         word_ids_list = tok_result.word_ids(batch_index=0)
         words_mask = torch.zeros(len(word_ids_list), dtype=torch.long)
@@ -155,12 +156,13 @@ def benchmark_vllm():
 
         gliner_data = {
             "input_ids": input_ids.tolist(),
+            "attention_mask": attention_mask.tolist(),
             "words_mask": words_mask.tolist(),
             "text_lengths": len(words),
             "labels_embeds": label_embs.tolist(),
         }
         prompt = TokensPrompt(prompt_token_ids=input_ids.tolist())
-        pooling_params = PoolingParams(extra_kwargs=gliner_data)
+        pooling_params = PoolingParams(task="plugin", extra_kwargs=gliner_data)
         return prompt, pooling_params
 
     # Prepare all inputs
@@ -173,20 +175,32 @@ def benchmark_vllm():
 
     # Warmup (20 iterations to ensure Triton JIT + CUDA graphs are fully cached)
     for _ in range(20):
-        llm.embed([all_prompts[0]], pooling_params=all_params[0])
+        llm.encode(
+            [all_prompts[0]],
+            pooling_params=all_params[0],
+            pooling_task="plugin",
+        )
 
     # Single text
     N = 20
     t0 = time.perf_counter()
     for _ in range(N):
-        llm.embed([all_prompts[0]], pooling_params=all_params[0])
+        llm.encode(
+            [all_prompts[0]],
+            pooling_params=all_params[0],
+            pooling_task="plugin",
+        )
     single_lat = (time.perf_counter() - t0) / N * 1000
     print(f"\nSingle text latency: {single_lat:.1f}ms")
 
     # Batch — send all at once
     t0 = time.perf_counter()
     for _ in range(N):
-        llm.embed(all_prompts, pooling_params=all_params)
+        llm.encode(
+            all_prompts,
+            pooling_params=all_params,
+            pooling_task="plugin",
+        )
     batch_lat = (time.perf_counter() - t0) / N * 1000
     batch_tput = len(TEST_TEXTS) / (batch_lat / 1000)
     print(f"\nBatch ({len(TEST_TEXTS)} texts) latency: {batch_lat:.1f}ms")

@@ -17,7 +17,8 @@ import torch
 import torch.nn as nn
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.linear import ReplicatedLinear
-from vllm.model_executor.layers.pooler.tokwise import pooler_for_token_embed
+from vllm_factory.pooling.protocol import PassthroughPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 from vllm.model_executor.models.qwen3_vl import (
     Qwen3VLDummyInputsBuilder,
@@ -115,13 +116,10 @@ class Qwen3VLForColPali(Qwen3VLForConditionalGeneration):
             quant_config=vllm_config.quant_config,
         )
 
-        pooler_config = vllm_config.model_config.pooler_config
-        if pooler_config is not None:
-            self.pooler = pooler_for_token_embed(pooler_config)
-        else:
-            from vllm.config import PoolerConfig
-
-            self.pooler = pooler_for_token_embed(PoolerConfig(pooling_type="ALL"))
+        self.pooler = VllmPoolerAdapter(
+            PassthroughPooler(),
+            pooler_config=vllm_config.model_config.pooler_config,
+        )
 
     def forward(
         self, input_ids, positions, intermediate_tensors=None, inputs_embeds=None, **kwargs
@@ -137,4 +135,8 @@ class Qwen3VLForColPali(Qwen3VLForConditionalGeneration):
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         loader = AutoWeightsLoader(self)
-        return loader.load_weights(iter(list(weights)), mapper=self.hf_to_vllm_mapper)
+        loaded = loader.load_weights(iter(list(weights)), mapper=self.hf_to_vllm_mapper)
+        # Mark constructor-initialized params as loaded for vLLM 0.19+ validation
+        for name in dict(self.named_parameters()):
+            loaded.add(name)
+        return loaded

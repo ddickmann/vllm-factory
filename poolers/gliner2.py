@@ -10,7 +10,7 @@
 # Supports 4 task types: entities, json_structures, relations, classifications
 # Uses the same SpanRepLayer from gliner.modeling.span_rep as GLiNER v1
 #
-# Compatible with vLLM 0.15.x pooling interface
+# Implements FactoryPooler protocol — zero vLLM imports.
 
 from __future__ import annotations
 
@@ -21,14 +21,7 @@ from typing import Any, Dict, List, Optional
 import torch
 import torch.nn as nn
 
-# vLLM imports
-try:
-    from vllm.model_executor.pooling_metadata import PoolingMetadata, PoolingTensors
-except ImportError:
-    from vllm.v1.pool.metadata import PoolingMetadata
-    PoolingTensors = None
-
-PoolerOutput = list[torch.Tensor]
+from vllm_factory.pooling.protocol import PoolerContext, split_hidden_states
 
 
 # ==================================================================
@@ -199,17 +192,10 @@ class GLiNER2Pooler(nn.Module):
         # Count embedding (CountLSTM)
         self.count_embed = CountLSTM(hidden_size)
 
-    def get_supported_tasks(self):
-        """Return supported tasks for vLLM 0.15.x pooling runner."""
-        return {"embed", "classify"}
+    # ── FactoryPooler protocol ───────────────────────────────────────────
 
-    def get_pooling_updates(self, task=None):
-        """Request token IDs to be available in pooling metadata."""
-        try:
-            from vllm.model_executor.layers.pooler import PoolingParamsUpdate
-            return PoolingParamsUpdate(requires_token_ids=True)
-        except ImportError:
-            return None
+    def get_tasks(self) -> set[str]:
+        return {"embed", "classify", "plugin"}
 
     def compute_span_rep(self, token_embs: torch.Tensor) -> Dict[str, Any]:
         """Compute span representations from token embeddings.
@@ -282,74 +268,32 @@ class GLiNER2Pooler(nn.Module):
         logits = self.classifier(cls_embeds).squeeze(-1)
         return logits
 
-    # ----------------------------------------------------------------
-    # vLLM pooler interface
-    # ----------------------------------------------------------------
-
-    def _extract_sequences(self, hidden_states, pooling_metadata):
-        if PoolingTensors is not None:
-            prompt_lens = PoolingTensors.from_pooling_metadata(
-                pooling_metadata, hidden_states.device,
-            ).prompt_lens
-        else:
-            prompt_lens = pooling_metadata.prompt_lens.to(hidden_states.device)
-
-        sequences, offset = [], 0
-        for L in prompt_lens:
-            sequences.append(hidden_states[offset:offset + L])
-            offset += L
-        return sequences
-
-    @staticmethod
-    def _get_extra_kwargs(pp) -> Optional[dict]:
-        for attr in ("extra_kwargs", "additional_data", "additional_metadata"):
-            md = getattr(pp, attr, None)
-            if md is not None and isinstance(md, dict):
-                return md
-        return None
-
-    def forward(self, hidden_states: torch.Tensor,
-                pooling_metadata: PoolingMetadata) -> PoolerOutput:
-        """vLLM pooler forward.
-
-        Extra kwargs expected:
-            mapped_indices: list of (seg_type, orig_idx, schema_idx) tuples
-            schema_tokens_list: list of schema token lists
-            task_types: list of task type strings
-            text_tokens: list of text token strings
-            schema_count: int
-            original_text: str
-            start_mapping: list of char start positions
-            end_mapping: list of char end positions
-            schema_dict: optional dict for classification
-            threshold: float
-        """
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        ctx: PoolerContext,
+    ) -> list[torch.Tensor | None]:
         try:
-            sequences = self._extract_sequences(hidden_states, pooling_metadata)
+            sequences = split_hidden_states(hidden_states, ctx.seq_lengths)
         except Exception:
-            dummy = torch.zeros(4, device=hidden_states.device, dtype=hidden_states.dtype)
+            dummy = torch.zeros(
+                4, device=hidden_states.device, dtype=hidden_states.dtype
+            )
             return [dummy]
-
-        pp_list: List[Any] = []
-        if hasattr(pooling_metadata, "pooling_params") and pooling_metadata.pooling_params:
-            pp_list = list(pooling_metadata.pooling_params)
-        elif hasattr(pooling_metadata, "seq_groups") and pooling_metadata.seq_groups:
-            for seq_ids, pp in pooling_metadata.seq_groups:
-                pp_list.extend([pp] * len(seq_ids))
-
-        while len(pp_list) < len(sequences):
-            pp_list.append(None)
-        pp_list = pp_list[:len(sequences)]
 
         outputs: List[torch.Tensor] = []
 
         for i, tok in enumerate(sequences):
             dev = tok.device
-            add = self._get_extra_kwargs(pp_list[i])
+            add = ctx.extra_kwargs[i] if i < len(ctx.extra_kwargs) else {}
+            prompt_ids = ctx.prompt_token_ids[i] if i < len(ctx.prompt_token_ids) else None
 
-            if add is None:
+            if not add:
                 outputs.append(torch.zeros(4, device=dev, dtype=torch.float32))
                 continue
+
+            if prompt_ids is not None and "input_ids" not in add:
+                add = {**add, "input_ids": prompt_ids}
 
             result = self._process_single(tok, add)
             outputs.append(result)

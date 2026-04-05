@@ -34,6 +34,10 @@ HF_MODEL_ID = "knowledgator/gliner-linker-large-v1.0"
 _ENCODE_LABELS_BATCH_SIZE = 32
 
 
+def _labels_cache_key(labels: List[str]) -> str:
+    return "\x1f".join(labels)
+
+
 def _cap_labels_tokenizer_max_length(gliner, max_length: int) -> None:
     """Mirror GLinker ``L3Component._setup``: the labels DeBERTa tokenizer often reports a huge
     ``model_max_length``, so ``encode_labels`` uses ``padding='max_length'`` without actually padding.
@@ -74,6 +78,8 @@ class GLiNERLinkerProcessor:
         self._collator = None
         self._labels: List[str] = []
         self._label_embeddings: Optional[torch.Tensor] = None
+        self._labels_key: str = ""
+        self._warmed_label_keys: set[str] = set()
 
     def _ensure_llm(self):
         if self._llm is not None:
@@ -128,6 +134,7 @@ class GLiNERLinkerProcessor:
         self._label_embeddings = gliner.encode_labels(unique, batch_size=bs).cpu()
         self._label_embeddings_list = self._label_embeddings.tolist()
         self._labels = unique
+        self._labels_key = _labels_cache_key(unique)
 
         dp = gliner.data_processor
         self._tokenizer = dp.transformer_tokenizer
@@ -174,12 +181,8 @@ class GLiNERLinkerProcessor:
         )
 
         input_ids = batch["input_ids"][0].detach().cpu()
+        attention_mask = batch["attention_mask"][0].detach().cpu()
         words_mask = batch["words_mask"][0].detach().cpu()
-        am = batch.get("attention_mask")
-        if am is not None:
-            attention_mask = am[0].detach().cpu()
-        else:
-            attention_mask = torch.ones_like(input_ids, dtype=torch.long)
         tl = batch["text_lengths"]
         if tl.dim() == 2:
             text_length = int(tl[0, 0].item())
@@ -191,18 +194,18 @@ class GLiNERLinkerProcessor:
             "words": words,
             "word_starts": word_starts,
             "word_ends": word_ends,
-            "input_ids": input_ids,
             "attention_mask": attention_mask,
             "words_mask": words_mask,
             "text_lengths": text_length,
+            "prompt_token_ids": input_ids.tolist(),
         }
 
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
 
-    def _run_vllm(self, tokenized: List[dict]) -> List[torch.Tensor]:
-        """Call vLLM LLM.embed() for a batch of tokenized texts."""
+    def _run_vllm(self, tokenized: List[dict], *, threshold: float) -> List[torch.Tensor]:
+        """Call vLLM's plugin pooling path for a batch of tokenized texts."""
         from vllm.inputs import TokensPrompt
         from vllm.pooling_params import PoolingParams
 
@@ -210,22 +213,30 @@ class GLiNERLinkerProcessor:
         prompts, params = [], []
 
         for t in tokenized:
-            ids = t["input_ids"].tolist()
+            ids = t["prompt_token_ids"]
             data = {
-                "input_ids": ids,
                 "attention_mask": t["attention_mask"].tolist(),
                 "words_mask": t["words_mask"].tolist(),
                 "text_lengths": t["text_lengths"],
-                "labels_embeds": le_list,
+                "threshold": threshold,
+                "labels_key": self._labels_key,
             }
+            if self._labels_key not in self._warmed_label_keys:
+                data["labels_embeds"] = le_list
             prompts.append(TokensPrompt(prompt_token_ids=ids))
-            params.append(PoolingParams(extra_kwargs=data))
+            params.append(PoolingParams(task="plugin", extra_kwargs=data))
 
-        outputs = self._llm.embed(prompts, pooling_params=params)
+        outputs = self._llm.encode(
+            prompts,
+            pooling_params=params,
+            pooling_task="plugin",
+        )
+        if self._labels_key:
+            self._warmed_label_keys.add(self._labels_key)
 
         results = []
         for out in outputs:
-            results.append(torch.tensor(out.outputs.embedding))
+            results.append(torch.as_tensor(out.outputs.data))
         return results
 
     def _decode(
@@ -241,10 +252,30 @@ class GLiNERLinkerProcessor:
         if raw.numel() < 4:
             return []
 
+        raw = raw.to(dtype=torch.float32)
+        span_logits = None
+        span_idx = None
+        span_mask = None
+
         W = int(raw[0].item())
         C = int(raw[1].item())
         S = int(raw[2].item())
-        scores = raw[3:].reshape(1, W, C, S)  # (1, W, C, 3) — last dim start / end / inside
+        if raw.numel() >= 4:
+            N = int(raw[3].item())
+            expected = 4 + (W * C * S) + (N * 2) + N + (N * C)
+            if expected == raw.numel():
+                offset = 4
+                scores = raw[offset : offset + (W * C * S)].reshape(1, W, C, S)
+                offset += W * C * S
+                span_idx = raw[offset : offset + (N * 2)].reshape(1, N, 2).long()
+                offset += N * 2
+                span_mask = raw[offset : offset + N].reshape(1, N).bool()
+                offset += N
+                span_logits = raw[offset : offset + (N * C)].reshape(1, N, C)
+            else:
+                scores = raw[3:].reshape(1, W, C, S)
+        else:
+            scores = raw[3:].reshape(1, W, C, S)
 
         id_to_classes = {i + 1: label for i, label in enumerate(self._labels)}
 
@@ -255,6 +286,9 @@ class GLiNERLinkerProcessor:
             tokens=[tok["words"]],
             id_to_classes=id_to_classes,
             model_output=scores,
+            span_logits=span_logits,
+            span_idx=span_idx,
+            span_mask=span_mask,
             flat_ner=flat_ner,
             threshold=threshold,
             multi_label=multi_label,
@@ -312,7 +346,7 @@ class GLiNERLinkerProcessor:
             raise RuntimeError("Call warmup(labels) first")
 
         tokenized = [self._tokenize(t) for t in texts]
-        raw_outputs = self._run_vllm(tokenized)
+        raw_outputs = self._run_vllm(tokenized, threshold=threshold)
 
         all_entities = []
         for raw, tok in zip(raw_outputs, tokenized):

@@ -21,19 +21,13 @@ Request format (offline):
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Dict
 
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
-from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
-from vllm.inputs import TokensPrompt
-from vllm.inputs.data import PromptType
-from vllm.outputs import PoolingRequestOutput
-from vllm.plugins.io_processors.interface import IOProcessor
-from vllm.pooling_params import PoolingParams
+from vllm_factory.io.base import FactoryIOProcessor, TokensPrompt, PromptType, PoolingRequestOutput
 
 from plugins.deberta_gliner2.processor import (
     build_schema_for_classification,
@@ -63,21 +57,22 @@ class GLiNER2Input:
     schema: Dict = field(default_factory=dict)
 
 
-class DeBERTaGLiNER2IOProcessor(IOProcessor[GLiNER2Input, Dict]):
+class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
     """IOProcessor for deberta_gliner2 — schema-based extraction with DeBERTa backbone.
 
     Data flow:
         IOProcessorRequest(data={text, labels, task_type})
-        → parse_request → GLiNER2Input (with built schema)
-        → pre_process   → TokensPrompt (+ stash extra_kwargs and metadata)
-        → validate_or_generate_params → PoolingParams(extra_kwargs=...)
-        → engine.encode  → PoolingRequestOutput
-        → post_process   → dict (decoded + formatted results)
-        → output_to_response → IOProcessorResponse(data={...})
+        → factory_parse   → GLiNER2Input (with built schema)
+        → factory_pre_process → TokensPrompt (+ stash extra_kwargs and metadata)
+        → merge_pooling_params → PoolingParams(task="plugin", extra_kwargs=...)
+        → engine.encode    → PoolingRequestOutput
+        → factory_post_process → dict (decoded + formatted results)
     """
 
-    def __init__(self, vllm_config: VllmConfig):
-        super().__init__(vllm_config)
+    pooling_task = "plugin"
+
+    def __init__(self, vllm_config: VllmConfig, *args, **kwargs):
+        super().__init__(vllm_config, *args, **kwargs)
 
         model_id = vllm_config.model_config.model
         self._tokenizer = AutoTokenizer.from_pretrained(
@@ -85,10 +80,6 @@ class DeBERTaGLiNER2IOProcessor(IOProcessor[GLiNER2Input, Dict]):
             use_fast=True,
             trust_remote_code=True,
         )
-
-        self._lock = threading.Lock()
-        self._pending_extra_kwargs: dict | None = None
-        self._request_meta: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # Task-type auto-detection
@@ -109,16 +100,14 @@ class DeBERTaGLiNER2IOProcessor(IOProcessor[GLiNER2Input, Dict]):
         return "entities"
 
     # ------------------------------------------------------------------
-    # IOProcessor ABC implementation
+    # FactoryIOProcessor implementation
     # ------------------------------------------------------------------
 
-    def parse_request(self, request: Any) -> GLiNER2Input:
-        if hasattr(request, "data"):
-            data = request.data
-        elif isinstance(request, dict) and "data" in request:
-            data = request["data"]
-        else:
-            data = request
+    def factory_parse(self, data: Any) -> GLiNER2Input:
+        if hasattr(data, "data"):
+            data = data.data
+        elif isinstance(data, dict) and "data" in data:
+            data = data["data"]
 
         if not isinstance(data, dict):
             raise ValueError(f"Expected dict with 'text' and 'labels' keys, got {type(data)}")
@@ -143,18 +132,16 @@ class DeBERTaGLiNER2IOProcessor(IOProcessor[GLiNER2Input, Dict]):
             schema=schema,
         )
 
-    def pre_process(
+    def factory_pre_process(
         self,
-        prompt: GLiNER2Input,
-        request_id: str | None = None,
-        **kwargs,
+        parsed_input: GLiNER2Input,
+        request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
-        result = preprocess(self._tokenizer, prompt.text, prompt.schema)
+        result = preprocess(self._tokenizer, parsed_input.text, parsed_input.schema)
 
         ids_list = result["input_ids"]
 
         gliner_data = {
-            "input_ids": ids_list,
             "mapped_indices": result["mapped_indices"],
             "schema_count": result["schema_count"],
             "special_token_ids": result["special_token_ids"],
@@ -178,40 +165,16 @@ class DeBERTaGLiNER2IOProcessor(IOProcessor[GLiNER2Input, Dict]):
             "end_mapping": result["end_mapping"],
         }
 
-        with self._lock:
-            self._pending_extra_kwargs = gliner_data
-            if request_id is not None:
-                self._request_meta[request_id] = postprocess_meta
-            else:
-                self._request_meta["_offline"] = postprocess_meta
+        self._stash(extra_kwargs=gliner_data, request_id=request_id, meta=postprocess_meta)
 
         return TokensPrompt(prompt_token_ids=ids_list)
 
-    def validate_or_generate_params(
-        self,
-        params: PoolingParams | None = None,
-    ) -> PoolingParams:
-        with self._lock:
-            extra = self._pending_extra_kwargs
-            self._pending_extra_kwargs = None
-
-        if params is not None and extra is not None:
-            params.extra_kwargs = extra
-            return params
-
-        return PoolingParams(extra_kwargs=extra)
-
-    def post_process(
+    def factory_post_process(
         self,
         model_output: Sequence[PoolingRequestOutput],
-        request_id: str | None = None,
-        **kwargs,
+        request_meta: Any,
     ) -> Dict:
-        meta_key = request_id if request_id is not None else "_offline"
-        with self._lock:
-            meta = self._request_meta.pop(meta_key, None)
-
-        if not model_output or meta is None:
+        if not model_output or request_meta is None:
             return {}
 
         output = model_output[0]
@@ -221,17 +184,11 @@ class DeBERTaGLiNER2IOProcessor(IOProcessor[GLiNER2Input, Dict]):
 
         results = decode_output(
             raw,
-            schema=meta["schema_dict"],
-            task_types=meta["task_types"],
+            schema=request_meta["schema_dict"],
+            task_types=request_meta["task_types"],
         )
 
         return format_results(results)
-
-    def output_to_response(
-        self,
-        plugin_output: Dict,
-    ) -> IOProcessorResponse:
-        return IOProcessorResponse(data=plugin_output)
 
 
 def get_processor_cls() -> str:

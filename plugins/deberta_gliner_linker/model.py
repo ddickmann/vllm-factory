@@ -19,6 +19,7 @@ Architecture:
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import sys
 from pathlib import Path
@@ -26,8 +27,10 @@ from typing import Iterable, Optional, Tuple
 
 import torch
 from torch import nn
+from gliner.modeling.span_rep import SpanRepLayer
 from transformers import DebertaConfig
 from vllm.config import VllmConfig
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 from .config import GLiNERLinkerConfig
 
@@ -65,25 +68,31 @@ class GLiNERLinkerModel(nn.Module):
         self.config = cfg
         self.vllm_config = vllm_config
 
-        # Build DeBERTa v1 config (same architecture for both encoders)
-        encoder_cfg = DebertaConfig(
-            vocab_size=cfg.vocab_size,
-            hidden_size=cfg.encoder_hidden_size,
-            num_hidden_layers=cfg.encoder_num_hidden_layers,
-            num_attention_heads=cfg.encoder_num_attention_heads,
-            intermediate_size=cfg.encoder_intermediate_size,
-            hidden_act=cfg.encoder_hidden_act,
-            hidden_dropout_prob=0.0,
-            attention_probs_dropout_prob=0.0,
-            max_position_embeddings=cfg.encoder_max_position_embeddings,
-            type_vocab_size=cfg.encoder_type_vocab_size,
-            layer_norm_eps=cfg.encoder_layer_norm_eps,
-            relative_attention=cfg.encoder_relative_attention,
-            max_relative_positions=cfg.encoder_max_relative_positions,
-            position_biased_input=cfg.encoder_position_biased_input,
-            pad_token_id=cfg.encoder_pad_token_id,
-            pos_att_type=cfg.encoder_pos_att_type,
-        )
+        # Build DeBERTa v1 config (same architecture for both encoders).
+        gliner_cfg_path = Path(vllm_config.model_config.model) / "gliner_config.json"
+        if gliner_cfg_path.exists():
+            with gliner_cfg_path.open() as fh:
+                gliner_cfg = json.load(fh)
+            encoder_cfg = DebertaConfig(**gliner_cfg["encoder_config"])
+        else:
+            encoder_cfg = DebertaConfig(
+                vocab_size=cfg.vocab_size,
+                hidden_size=cfg.encoder_hidden_size,
+                num_hidden_layers=cfg.encoder_num_hidden_layers,
+                num_attention_heads=cfg.encoder_num_attention_heads,
+                intermediate_size=cfg.encoder_intermediate_size,
+                hidden_act=cfg.encoder_hidden_act,
+                hidden_dropout_prob=0.0,
+                attention_probs_dropout_prob=0.0,
+                max_position_embeddings=cfg.encoder_max_position_embeddings,
+                type_vocab_size=cfg.encoder_type_vocab_size,
+                layer_norm_eps=cfg.encoder_layer_norm_eps,
+                relative_attention=cfg.encoder_relative_attention,
+                max_relative_positions=cfg.encoder_max_relative_positions,
+                position_biased_input=cfg.encoder_position_biased_input,
+                pad_token_id=cfg.encoder_pad_token_id,
+                pos_att_type=cfg.encoder_pos_att_type,
+            )
 
         # TEXT encoder — runs in model forward, produces hidden states
         self.text_encoder = DebertaEncoderModel(config=encoder_cfg)
@@ -91,7 +100,7 @@ class GLiNERLinkerModel(nn.Module):
         # LABELS encoder — used by pooler for online label encoding
         self.labels_encoder = DebertaEncoderModel(config=encoder_cfg)
 
-        # LSTM — refines text encoder output (word-level embeddings)
+        # LSTM — native GLiNER bi-encoder inference applies this to word embeddings.
         H = cfg.encoder_hidden_size
         self.rnn = nn.LSTM(
             input_size=H,
@@ -101,6 +110,14 @@ class GLiNERLinkerModel(nn.Module):
             bidirectional=True,
         )
         self.rnn.eval()
+
+        # Span representation head used when represent_spans=True.
+        self.span_rep_layer = SpanRepLayer(
+            span_mode=getattr(cfg, "span_mode", "token_level"),
+            hidden_size=H,
+            max_width=getattr(cfg, "max_width", 12),
+            dropout=float(getattr(cfg, "dropout", 0.0)),
+        )
 
         # Scorer — bilinear interaction + MLP → 3 scores per token-label pair
         self.scorer_proj_token = nn.Linear(H, H * 2)
@@ -118,10 +135,10 @@ class GLiNERLinkerModel(nn.Module):
             cfg.encoder_num_hidden_layers,
         )
 
-        # Pooler — word extraction + scoring (no LSTM on inference path)
+        # Pooler mirrors GLiNER's full bi-encoder inference path.
         from .pooler import GLiNERLinkerPooler
 
-        self.pooler = GLiNERLinkerPooler(self)
+        self.pooler = VllmPoolerAdapter(GLiNERLinkerPooler(self), requires_token_ids=True)
 
     def embed_input_ids(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
         """Required by vLLM's pooling runner to embed token IDs."""
@@ -262,6 +279,7 @@ class GLiNERLinkerModel(nn.Module):
         labels_weights = []
         rnn_state = {}
         scorer_state = {}
+        span_rep_state = {}
 
         for hf_name, tensor in weights:
             if hf_name.startswith(text_prefix):
@@ -279,6 +297,9 @@ class GLiNERLinkerModel(nn.Module):
             elif hf_name.startswith("scorer."):
                 key = hf_name[len("scorer.") :]
                 scorer_state[key] = tensor
+            elif hf_name.startswith("span_rep_layer."):
+                key = hf_name[len("span_rep_layer.") :]
+                span_rep_state[key] = tensor
 
         # Load text encoder via custom encoder's load_weights
         self.text_encoder.load_weights(text_weights)
@@ -292,6 +313,10 @@ class GLiNERLinkerModel(nn.Module):
         if rnn_state:
             self.rnn.load_state_dict(rnn_state, strict=False)
             logger.info("LSTM: %d keys", len(rnn_state))
+
+        if span_rep_state:
+            self.span_rep_layer.load_state_dict(span_rep_state, strict=False)
+            logger.info("SpanRep: %d keys", len(span_rep_state))
 
         # Load scorer
         if scorer_state:

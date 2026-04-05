@@ -1,0 +1,38 @@
+{
+  "plugin": "mmbert_gliner",
+  "model_id": "VAGOsolutions/SauerkrautLM-GLiNER",
+  "served_model_id": "/tmp/sauerkraut-gliner-vllm",
+  "gpu": "NVIDIA RTX A5000",
+  "seq_len": 768,
+  "num_requests": 10,
+  "concurrency_levels": [
+    1
+  ],
+  "modes": [
+    "saturate"
+  ],
+  "sweeps": [
+    {
+      "mode": "saturate",
+      "concurrency": 1,
+      "target_arrival_rps": null,
+      "vllm_req_per_s": 30.3,
+      "vllm_p50_ms": 32.9,
+      "vllm_p95_ms": 38.2,
+      "vllm_p99_ms": 38.2,
+      "vanilla_req_per_s": 46.2,
+      "vanilla_p50_ms": 22.1,
+      "vanilla_p95_ms": 22.6,
+      "vanilla_p99_ms": 22.6,
+      "throughput_factor": 0.66,
+      "latency_factor": 0.67
+    }
+  ],
+  "parity_metric": "entity_recall",
+  "parity_score": 1.0,
+  "dataset_label": "NuNER random 512 samples",
+  "timestamp": "2026-04-04T21:18:23.238699+00:00",
+  "dtype": "bfloat16",
+  "vllm_version": "0.19.0",
+  "compat_mode": "native"
+}

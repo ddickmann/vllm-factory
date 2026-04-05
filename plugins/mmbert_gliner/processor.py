@@ -75,13 +75,12 @@ class GLiNERModernBERTProcessor(BaseProcessor):
 
         # Build extra_kwargs (no attention_mask for ModernBERT)
         gliner_data = {
-            "input_ids": input_ids.tolist(),
             "words_mask": words_mask.tolist(),
             "text_lengths": text_lengths,
         }
 
         prompt = TokensPrompt(prompt_token_ids=input_ids.tolist())
-        pooling_params = PoolingParams(extra_kwargs=gliner_data)
+        pooling_params = PoolingParams(task="plugin", extra_kwargs=gliner_data)
 
         return PreprocessedInput(
             prompt=prompt,

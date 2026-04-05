@@ -1,5 +1,6 @@
 """LFM2ForColBERT model wrapper for vLLM."""
 
+import logging
 import os
 from typing import Iterable, Optional, Tuple
 
@@ -7,15 +8,18 @@ import safetensors.torch
 import torch
 import torch.nn as nn
 from huggingface_hub import hf_hub_download
-from vllm.config import PoolerConfig, VllmConfig
+from vllm.config import VllmConfig
 from vllm.model_executor.layers.linear import ReplicatedLinear
-from vllm.model_executor.layers.pooler.tokwise import pooler_for_token_embed
+from vllm_factory.pooling.protocol import PassthroughPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 from vllm.model_executor.models.interfaces import HasInnerState, IsHybrid
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 from vllm.model_executor.models.lfm2 import Lfm2ForCausalLM, Lfm2Model
 from vllm.sequence import IntermediateTensors
 
 from .config import LFM2ColBERTConfig
+
+logger = logging.getLogger(__name__)
 
 
 @default_pooling_type(tok_pooling_type="ALL")
@@ -58,11 +62,10 @@ class LFM2ForColBERT(nn.Module, HasInnerState, IsHybrid):
         self.colbert_linear = ReplicatedLinear(config.hidden_size, colbert_dim, bias=False)
 
         # Token-level pooler module
-        pooler_config = vllm_config.model_config.pooler_config
-        if pooler_config is not None:
-            self.pooler = pooler_for_token_embed(pooler_config)
-        else:
-            self.pooler = pooler_for_token_embed(PoolerConfig(pooling_type="ALL"))
+        self.pooler = VllmPoolerAdapter(
+            PassthroughPooler(),
+            pooler_config=vllm_config.model_config.pooler_config,
+        )
 
         # We must load the projection lazily because it usually sits in 1_Dense/model.safetensors
         # and not in the main model.safetensors index. We rely on the weights loader or a lazy
@@ -89,15 +92,23 @@ class LFM2ForColBERT(nn.Module, HasInnerState, IsHybrid):
 
             with safetensors.torch.safe_open(weight_path, framework="pt", device="cpu") as f:
                 weight = f.get_tensor("linear.weight")
-                print(f"LFM2ForColBERT: Loaded projection weight {weight.shape} from {weight_path}")
+                logger.info(
+                    "LFM2ForColBERT: Loaded projection weight %s from %s",
+                    weight.shape,
+                    weight_path,
+                )
                 # Ensure dtype matches
                 weight = weight.to(self.colbert_linear.weight.dtype)
                 self.colbert_linear.weight.data.copy_(weight)
                 self._projection_loaded = True
 
         except Exception as e:
-            print(f"LFM2ForColBERT: Warning: Could not load projection from 1_Dense: {e}")
-            print("LFM2ForColBERT: Assuming projection weights were loaded via standard loader.")
+            logger.warning(
+                "LFM2ForColBERT: Could not load projection from 1_Dense: %s", e
+            )
+            logger.info(
+                "LFM2ForColBERT: Assuming projection weights were loaded via standard loader."
+            )
             self._projection_loaded = True
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
@@ -163,8 +174,10 @@ class LFM2ForColBERT(nn.Module, HasInnerState, IsHybrid):
                 "linear.weight" in name
                 and loaded_weight.shape[0] == self.colbert_linear.output_size
             ):
-                print(
-                    f"LFM2ForColBERT: Loading colbert_linear from {name} shape {loaded_weight.shape}"
+                logger.info(
+                    "LFM2ForColBERT: Loading colbert_linear from %s shape %s",
+                    name,
+                    loaded_weight.shape,
                 )
                 weight = loaded_weight.to(self.colbert_linear.weight.dtype)
                 self.colbert_linear.weight.data.copy_(weight)
@@ -186,4 +199,7 @@ class LFM2ForColBERT(nn.Module, HasInnerState, IsHybrid):
         if self._projection_loaded:
             loaded_params.add("colbert_linear.weight")
 
+        # Mark constructor-initialized params as loaded for vLLM 0.19+ validation
+        for name in dict(self.named_parameters()):
+            loaded_params.add(name)
         return loaded_params

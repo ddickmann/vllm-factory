@@ -150,12 +150,6 @@ def register() -> None:
     """Register GLiNER-Linker with vLLM and HuggingFace."""
     from forge.registration import register_plugin
 
-    # Forward collator attention masks through vLLM pooling → model.forward (batched embed).
-    from plugins.deberta_gliner_linker.vllm_pooling_attention_mask import (
-        apply_pooling_attention_mask_patch,
-    )
-
-    apply_pooling_attention_mask_patch()
     register_plugin("gliner_linker", GLiNERLinkerConfig, "GLiNERLinkerModel", GLiNERLinkerModel)
 
 

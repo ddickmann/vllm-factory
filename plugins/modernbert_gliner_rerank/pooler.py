@@ -1,19 +1,17 @@
-"""Pooler: uni-encoder prompt + word extraction, LSTM, GLiNER Scorer (same math as linker)."""
+"""Pooler: uni-encoder prompt + word extraction, LSTM, GLiNER Scorer.
+
+Implements FactoryPooler protocol — zero vLLM imports.
+"""
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Set
+from typing import Any, List, Optional
 
 import torch
 import torch.nn as nn
 from gliner.modeling.utils import extract_prompt_features_and_word_embeddings
 
-try:
-    from vllm.model_executor.layers.pooler import PoolingTensors
-except ImportError:
-    PoolingTensors = None
-
-PoolerOutput = list[torch.Tensor]
+from vllm_factory.pooling.protocol import PoolerContext, split_hidden_states
 
 
 class GLiNERRerankPooler(nn.Module):
@@ -28,90 +26,36 @@ class GLiNERRerankPooler(nn.Module):
         object.__setattr__(self, "_scorer_out_mlp", model.scorer_out_mlp)
         object.__setattr__(self, "_model_config", model.vllm_config.model_config)
 
-    def get_supported_tasks(self) -> Set[str]:
-        return {"embed"}
+    # ── FactoryPooler protocol ───────────────────────────────────────────
 
-    def get_pooling_updates(self, task=None):
-        from vllm.model_executor.layers.pooler.common import PoolingParamsUpdate
+    def get_tasks(self) -> set[str]:
+        return {"embed", "plugin"}
 
-        return PoolingParamsUpdate(requires_token_ids=True)
-
-    @staticmethod
-    def _get_extra_kwargs(pp) -> Optional[dict]:
-        for attr in ("extra_kwargs", "additional_data", "additional_metadata"):
-            md = getattr(pp, attr, None)
-            if md is not None and isinstance(md, dict):
-                return md
-        return None
-
-    @staticmethod
-    def _to_tensor(x, device, dtype=None) -> torch.Tensor:
-        if isinstance(x, torch.Tensor):
-            return x.to(device=device, dtype=dtype) if dtype else x.to(device=device)
-        t = torch.tensor(x, device=device)
-        return t.to(dtype) if dtype else t
-
-    def _extract_sequences(self, hidden_states, pooling_metadata):
-        if PoolingTensors is not None:
-            prompt_lens = PoolingTensors.from_pooling_metadata(
-                pooling_metadata, hidden_states.device
-            ).prompt_lens
-        else:
-            prompt_lens = pooling_metadata.prompt_lens.to(hidden_states.device)
-
-        sequences, offset = [], 0
-        for L in prompt_lens:
-            sequences.append(hidden_states[offset : offset + L])
-            offset += L
-        return sequences
-
-    def _run_lstm(self, word_embs, mask_1d):
-        """word_embs (1, W, H), mask (1, W) with 1 valid / 0 pad."""
-        lengths = mask_1d.sum(dim=1).cpu()
-        packed = nn.utils.rnn.pack_padded_sequence(
-            word_embs, lengths, batch_first=True, enforce_sorted=False
-        )
-        out, _ = self._rnn(packed)
-        unpacked, _ = nn.utils.rnn.pad_packed_sequence(out, batch_first=True)
-        return unpacked
-
-    def _run_scorer(self, word_embs, label_embs):
-        B, W, H = word_embs.shape
-        C = label_embs.shape[1]
-        token_rep = self._scorer_proj_token(word_embs)
-        token_rep = token_rep.view(B, W, 1, 2, H)
-        label_rep = self._scorer_proj_label(label_embs)
-        label_rep = label_rep.view(B, 1, C, 2, H)
-        token_rep = token_rep.expand(-1, -1, C, -1, -1).permute(3, 0, 1, 2, 4)
-        label_rep = label_rep.expand(-1, W, -1, -1, -1).permute(3, 0, 1, 2, 4)
-        cat = torch.cat([token_rep[0], label_rep[0], token_rep[1] * label_rep[1]], dim=-1)
-        return self._scorer_out_mlp(cat)
-
-    def forward(self, hidden_states: torch.Tensor, pooling_metadata) -> PoolerOutput:
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        ctx: PoolerContext,
+    ) -> list[torch.Tensor | None]:
         try:
-            sequences = self._extract_sequences(hidden_states, pooling_metadata)
+            sequences = split_hidden_states(hidden_states, ctx.seq_lengths)
         except Exception as e:
             import logging
 
-            logging.getLogger(__name__).warning("Rerank pooler warmup fallback: %s", e)
-            dummy = torch.zeros(4, device=hidden_states.device, dtype=hidden_states.dtype)
+            logging.getLogger(__name__).warning(
+                "Rerank pooler warmup fallback: %s", e
+            )
+            dummy = torch.zeros(
+                4, device=hidden_states.device, dtype=hidden_states.dtype
+            )
             return [dummy]
 
-        pp_list: List[Any] = []
-        if hasattr(pooling_metadata, "pooling_params") and pooling_metadata.pooling_params:
-            pp_list = list(pooling_metadata.pooling_params)
-        elif hasattr(pooling_metadata, "seq_groups") and pooling_metadata.seq_groups:
-            for seq_ids, pp in pooling_metadata.seq_groups:
-                pp_list.extend([pp] * len(seq_ids))
-
-        if not pp_list:
+        if not ctx.extra_kwargs:
             return [
-                torch.zeros(4, device=hidden_states.device, dtype=torch.float32) for _ in sequences
+                torch.zeros(
+                    4, device=hidden_states.device, dtype=torch.float32
+                )
+                for _ in sequences
             ]
-
-        while len(pp_list) < len(sequences):
-            pp_list.append(None)
-        pp_list = pp_list[: len(sequences)]
 
         cfg = self._model_config.hf_config
         class_token_index = int(cfg.class_token_index)
@@ -121,14 +65,19 @@ class GLiNERRerankPooler(nn.Module):
         dev = hidden_states.device
 
         for i, tok in enumerate(sequences):
-            add = self._get_extra_kwargs(pp_list[i])
-            if add is None or "words_mask" not in add or "input_ids" not in add:
+            add = ctx.extra_kwargs[i] if i < len(ctx.extra_kwargs) else {}
+            prompt_ids = ctx.prompt_token_ids[i] if i < len(ctx.prompt_token_ids) else None
+            if not add or "words_mask" not in add:
                 outputs.append(torch.zeros(4, device=dev, dtype=torch.float32))
                 continue
 
             wmask = self._to_tensor(add["words_mask"], device=dev, dtype=torch.long)
             text_length = int(add["text_lengths"])
-            input_ids = self._to_tensor(add["input_ids"], device=dev, dtype=torch.long)
+            input_ids_value = add.get("input_ids", prompt_ids)
+            if input_ids_value is None:
+                outputs.append(torch.zeros(4, device=dev, dtype=torch.float32))
+                continue
+            input_ids = self._to_tensor(input_ids_value, device=dev, dtype=torch.long)
             attn = self._to_tensor(
                 add.get("attention_mask", [1] * int(input_ids.numel())),
                 device=dev,
@@ -150,14 +99,16 @@ class GLiNERRerankPooler(nn.Module):
             tok_b = tok.unsqueeze(0)
             tl = torch.tensor([text_length], device=dev, dtype=torch.long)
 
-            prompts, p_mask, words_pre, w_mask = extract_prompt_features_and_word_embeddings(
-                class_token_index,
-                tok_b,
-                input_ids_b,
-                attn_b,
-                tl,
-                wmask_b,
-                embed_ent_token=embed_ent_token,
+            prompts, p_mask, words_pre, w_mask = (
+                extract_prompt_features_and_word_embeddings(
+                    class_token_index,
+                    tok_b,
+                    input_ids_b,
+                    attn_b,
+                    tl,
+                    wmask_b,
+                    embed_ent_token=embed_ent_token,
+                )
             )
 
             words = self._run_lstm(words_pre, w_mask)
@@ -169,3 +120,38 @@ class GLiNERRerankPooler(nn.Module):
             outputs.append(flat)
 
         return outputs
+
+    # ── Internal helpers ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _to_tensor(x, device, dtype=None) -> torch.Tensor:
+        if isinstance(x, torch.Tensor):
+            return (
+                x.to(device=device, dtype=dtype) if dtype else x.to(device=device)
+            )
+        t = torch.tensor(x, device=device)
+        return t.to(dtype) if dtype else t
+
+    def _run_lstm(self, word_embs, mask_1d):
+        """word_embs (1, W, H), mask (1, W) with 1 valid / 0 pad."""
+        lengths = mask_1d.sum(dim=1).cpu()
+        packed = nn.utils.rnn.pack_padded_sequence(
+            word_embs, lengths, batch_first=True, enforce_sorted=False
+        )
+        out, _ = self._rnn(packed)
+        unpacked, _ = nn.utils.rnn.pad_packed_sequence(out, batch_first=True)
+        return unpacked
+
+    def _run_scorer(self, word_embs, label_embs):
+        B, W, H = word_embs.shape
+        C = label_embs.shape[1]
+        token_rep = self._scorer_proj_token(word_embs)
+        token_rep = token_rep.view(B, W, 1, 2, H)
+        label_rep = self._scorer_proj_label(label_embs)
+        label_rep = label_rep.view(B, 1, C, 2, H)
+        token_rep = token_rep.expand(-1, -1, C, -1, -1).permute(3, 0, 1, 2, 4)
+        label_rep = label_rep.expand(-1, W, -1, -1, -1).permute(3, 0, 1, 2, 4)
+        cat = torch.cat(
+            [token_rep[0], label_rep[0], token_rep[1] * label_rep[1]], dim=-1
+        )
+        return self._scorer_out_mlp(cat)

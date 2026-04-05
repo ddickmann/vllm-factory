@@ -6,6 +6,7 @@ Import from here — each kernel provides graceful fallbacks when Triton
 is unavailable.
 
 Available kernels:
+    - fused_gemma_rms_norm_dropout_residual: Fused GemmaRMSNorm + dropout + residual
     - fused_glu_mlp: Fused GELU * gate MLP
     - fused_layernorm: Fused LayerNorm with optional bias
     - fused_rope_global: Fused global RoPE embedding

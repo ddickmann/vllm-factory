@@ -78,14 +78,13 @@ class GLiNERMT5Processor(BaseProcessor):
 
         # Build extra_kwargs (matches superpod's model_requests.py)
         gliner_data = {
-            "input_ids": input_ids.tolist(),
             "words_mask": words_mask.tolist(),
             "text_lengths": text_lengths,
             "attention_mask": enc["attention_mask"][0].tolist(),
         }
 
         prompt = TokensPrompt(prompt_token_ids=input_ids.tolist())
-        pooling_params = PoolingParams(extra_kwargs=gliner_data)
+        pooling_params = PoolingParams(task="plugin", extra_kwargs=gliner_data)
 
         return PreprocessedInput(
             prompt=prompt,

@@ -7,41 +7,6 @@ import pytest
 from forge import preflight
 
 
-def test_require_pooling_patch_ready_success(monkeypatch) -> None:
-    monkeypatch.setattr(
-        preflight.pooling_patch, "ensure_supported_vllm_version", lambda strict=True: True
-    )
-    monkeypatch.setattr(preflight.pooling_patch, "verify_patch", lambda: True)
-    monkeypatch.delenv("VLLM_FACTORY_AUTO_APPLY_POOLING_PATCH", raising=False)
-    preflight.require_pooling_patch_ready()
-
-
-def test_require_pooling_patch_ready_raises_when_verify_fails(monkeypatch) -> None:
-    monkeypatch.setattr(
-        preflight.pooling_patch, "ensure_supported_vllm_version", lambda strict=True: True
-    )
-    monkeypatch.setattr(preflight.pooling_patch, "verify_patch", lambda: False)
-    monkeypatch.delenv("VLLM_FACTORY_AUTO_APPLY_POOLING_PATCH", raising=False)
-    with pytest.raises(RuntimeError):
-        preflight.require_pooling_patch_ready()
-
-
-def test_require_pooling_patch_ready_auto_apply(monkeypatch) -> None:
-    called = {"apply": False}
-
-    def _apply() -> bool:
-        called["apply"] = True
-        return True
-
-    monkeypatch.setattr(
-        preflight.pooling_patch, "ensure_supported_vllm_version", lambda strict=True: True
-    )
-    monkeypatch.setattr(preflight.pooling_patch, "apply_patch", _apply)
-    monkeypatch.setenv("VLLM_FACTORY_AUTO_APPLY_POOLING_PATCH", "1")
-    preflight.require_pooling_patch_ready()
-    assert called["apply"] is True
-
-
 def test_require_runtime_compatibility_skips_on_cuda(monkeypatch) -> None:
     fake_cuda = types.SimpleNamespace(is_available=lambda: True)
     fake_torch = types.SimpleNamespace(cuda=fake_cuda, ops=types.SimpleNamespace())

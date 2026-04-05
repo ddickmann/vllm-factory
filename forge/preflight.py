@@ -1,34 +1,32 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 
-from forge.patches import pooling_extra_kwargs as pooling_patch
+logger = logging.getLogger("vllm-factory.preflight")
 
 
-def require_pooling_patch_ready() -> None:
-    """Fail fast unless pooling patch verification passes.
+def require_native_io_path() -> None:
+    """Verify that vLLM supports the native IOProcessor path.
 
-    Optional behavior:
-    - Set VLLM_FACTORY_AUTO_APPLY_POOLING_PATCH=1 to auto-apply before verify.
+    vLLM >= 0.19 provides this natively. If a pre-0.19 vLLM is installed,
+    this will raise with clear instructions.
     """
-    pooling_patch.ensure_supported_vllm_version(strict=True)
+    from vllm_factory.compat.vllm_capabilities import detect
 
-    auto_apply = os.getenv("VLLM_FACTORY_AUTO_APPLY_POOLING_PATCH") == "1"
-    if auto_apply:
-        print("[PREFLIGHT] Auto-apply enabled, applying pooling patch before verify.")
-        pooling_patch.apply_patch()
-        return
-
-    ok = pooling_patch.verify_patch()
-    if ok:
-        print("[PREFLIGHT] Pooling patch verification passed.")
+    caps = detect()
+    if caps.has_io_processor_interface and caps.has_io_processor_response:
+        logger.info(
+            "[PREFLIGHT] Native IOProcessor path available (vLLM %s).",
+            caps.version,
+        )
         return
 
     raise RuntimeError(
-        "[PREFLIGHT] Pooling patch verification failed. "
-        "Run `python -m forge.patches.pooling_extra_kwargs` "
-        "or set VLLM_FACTORY_AUTO_APPLY_POOLING_PATCH=1."
+        f"[PREFLIGHT] vLLM {caps.version or 'UNKNOWN'} does not support the "
+        "native IOProcessor path. vllm-factory requires vLLM >= 0.19. "
+        "Upgrade with: pip install 'vllm>=0.19'"
     )
 
 
@@ -68,23 +66,33 @@ def require_runtime_compatibility() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="vLLM Factory startup preflight checks")
     parser.add_argument(
-        "--require-pooling-patch",
+        "--require-native-io",
         action="store_true",
-        help="Verify pooling patch behavior before server startup.",
+        help="Verify that vLLM supports native IOProcessor path.",
     )
     parser.add_argument(
         "--require-runtime-compat",
         action="store_true",
         help="Verify local torch/vLLM runtime compatibility before startup.",
     )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Run the environment diagnostics (doctor).",
+    )
     args = parser.parse_args()
 
-    if args.require_pooling_patch:
-        require_pooling_patch_ready()
+    if args.doctor:
+        from vllm_factory.compat.doctor import run_doctor
+        run_doctor()
+        return
+
+    if args.require_native_io:
+        require_native_io_path()
     if args.require_runtime_compat:
         require_runtime_compatibility()
-    if not args.require_pooling_patch and not args.require_runtime_compat:
-        print("[PREFLIGHT] No checks selected.")
+    if not args.require_native_io and not args.require_runtime_compat:
+        logger.info("[PREFLIGHT] No checks selected.")
 
 
 if __name__ == "__main__":

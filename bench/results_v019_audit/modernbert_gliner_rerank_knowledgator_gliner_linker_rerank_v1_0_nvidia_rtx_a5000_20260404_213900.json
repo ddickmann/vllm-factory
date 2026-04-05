@@ -1,0 +1,38 @@
+{
+  "plugin": "modernbert_gliner_rerank",
+  "model_id": "knowledgator/gliner-linker-rerank-v1.0",
+  "served_model_id": "/workspace/vllm-factory/plugins/modernbert_gliner_rerank/_model_cache",
+  "gpu": "NVIDIA RTX A5000",
+  "seq_len": 768,
+  "num_requests": 10,
+  "concurrency_levels": [
+    1
+  ],
+  "modes": [
+    "saturate"
+  ],
+  "sweeps": [
+    {
+      "mode": "saturate",
+      "concurrency": 1,
+      "target_arrival_rps": null,
+      "vllm_req_per_s": 35.0,
+      "vllm_p50_ms": 28.5,
+      "vllm_p95_ms": 32.1,
+      "vllm_p99_ms": 32.1,
+      "vanilla_req_per_s": 59.8,
+      "vanilla_p50_ms": 16.9,
+      "vanilla_p95_ms": 17.0,
+      "vanilla_p99_ms": 17.0,
+      "throughput_factor": 0.59,
+      "latency_factor": 0.59
+    }
+  ],
+  "parity_metric": "entity_recall",
+  "parity_score": 1.0,
+  "dataset_label": "NuNER 512 samples (fixed 5 labels)",
+  "timestamp": "2026-04-04T21:39:00.683124+00:00",
+  "dtype": "bfloat16",
+  "vllm_version": "0.19.0",
+  "compat_mode": "native"
+}

@@ -46,6 +46,8 @@ class BenchResult:
     dataset_label: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     dtype: str = "bfloat16"
+    vllm_version: str = ""
+    compat_mode: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)

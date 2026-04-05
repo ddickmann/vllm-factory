@@ -41,7 +41,8 @@ def start_server(
         "--io-processor-plugin", entry.io_plugin,
         "--port", str(PORT),
         "--trust-remote-code",
-    ] + entry.serve_flags
+    ]
+    cmd += entry.serve_flags
 
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -102,11 +103,14 @@ async def _send_request(
     model: str,
     payload_data,
     payload_key: str = "data",
+    request_task: str | None = None,
 ) -> float:
     body = {
         "model": model,
         payload_key: payload_data,
     }
+    if request_task is not None:
+        body["task"] = request_task
     start = time.perf_counter()
     async with session.post(url, json=body) as resp:
         raw = await resp.read()
@@ -147,6 +151,7 @@ async def _warmup_vllm(
 ) -> None:
     url = f"{BASE_URL}{entry.endpoint}"
     pk = entry.payload_key
+    request_task = entry.request_task
 
     connector = aiohttp.TCPConnector(limit=max(8, concurrency * 2))
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -161,6 +166,7 @@ async def _warmup_vllm(
                     entry.model_id,
                     dataset[i % len(dataset)],
                     pk,
+                    request_task=request_task,
                 )
 
         warmup_tasks = [
@@ -178,6 +184,7 @@ async def _run_vllm_saturate(
 ) -> dict:
     url = f"{BASE_URL}{entry.endpoint}"
     pk = entry.payload_key
+    request_task = entry.request_task
 
     connector = aiohttp.TCPConnector(limit=max(8, concurrency * 2))
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -186,7 +193,14 @@ async def _run_vllm_saturate(
 
         async def bounded(data) -> float:
             async with sem:
-                return await _send_request(session, url, entry.model_id, data, pk)
+                return await _send_request(
+                    session,
+                    url,
+                    entry.model_id,
+                    data,
+                    pk,
+                    request_task=request_task,
+                )
 
         latencies = await asyncio.gather(
             *[bounded(dataset[i % len(dataset)]) for i in range(num_requests)]
@@ -224,6 +238,7 @@ async def _run_vllm_staggered(
 ) -> dict:
     url = f"{BASE_URL}{entry.endpoint}"
     pk = entry.payload_key
+    request_task = entry.request_task
 
     connector = aiohttp.TCPConnector(limit=max(8, concurrency * 2))
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -240,6 +255,7 @@ async def _run_vllm_staggered(
                     entry.model_id,
                     dataset[i % len(dataset)],
                     pk,
+                    request_task=request_task,
                 )
 
         latencies = await asyncio.gather(
@@ -389,11 +405,18 @@ def run_benchmark(
     gpu = _detect_gpu()
     reference_model_id = entry.vanilla_kwargs.get("hf_model_id", entry.model_id)
 
+    from vllm_factory.compat.vllm_capabilities import detect as _detect_caps
+    caps = _detect_caps()
+    vllm_version = caps.version or "unknown"
+    compat_mode = "native"
+
     print(f"\n{'='*70}")
     print(f"  BENCHMARK: {plugin_name}")
     print(f"  Model:     {reference_model_id}")
     print(f"  Served:    {entry.model_id}")
     print(f"  GPU:       {gpu}")
+    print(f"  vLLM:      {vllm_version}")
+    print(f"  Compat:    {compat_mode}")
     print(f"  Requests:  {num_requests}")
     print(f"  Levels:    {concurrency_levels}")
     print(f"  Modes:     {modes}")
@@ -473,30 +496,52 @@ def run_benchmark(
     vanilla_metrics: dict[int, dict] = {}
     last_good: dict | None = None
     try:
-        for concurrency in concurrency_levels:
+        if entry.vanilla_batch_size is not None:
             metrics = _run_vanilla_baseline(
                 entry,
                 dataset,
                 num_requests,
-                batch_size=concurrency,
+                batch_size=entry.vanilla_batch_size,
                 runner=shared_runner,
             )
-            vanilla_metrics[concurrency] = metrics
-            if metrics.get(_OOM_SENTINEL):
-                print(
-                    f"  [Vanilla@{concurrency}] OOM — batch size too large for GPU"
+            for concurrency in concurrency_levels:
+                vanilla_metrics[concurrency] = dict(metrics)
+                if metrics.get(_OOM_SENTINEL):
+                    print(
+                        f"  [Vanilla@{concurrency}] OOM — batch size too large for GPU"
+                    )
+                else:
+                    print(
+                        f"  [Vanilla@{concurrency}] req/s={metrics['req_per_s']:.1f}  "
+                        f"p50={metrics['p50_ms']:.1f}ms  "
+                        f"p99={metrics['p99_ms']:.1f}ms  "
+                        f"(fixed batch size {entry.vanilla_batch_size})"
+                    )
+        else:
+            for concurrency in concurrency_levels:
+                metrics = _run_vanilla_baseline(
+                    entry,
+                    dataset,
+                    num_requests,
+                    batch_size=concurrency,
+                    runner=shared_runner,
                 )
-                if last_good is not None:
-                    vanilla_metrics[concurrency] = {
-                        k: v for k, v in last_good.items() if k != _OOM_SENTINEL
-                    }
-            else:
-                last_good = metrics
-                print(
-                    f"  [Vanilla@{concurrency}] req/s={metrics['req_per_s']:.1f}  "
-                    f"p50={metrics['p50_ms']:.1f}ms  "
-                    f"p99={metrics['p99_ms']:.1f}ms"
-                )
+                vanilla_metrics[concurrency] = metrics
+                if metrics.get(_OOM_SENTINEL):
+                    print(
+                        f"  [Vanilla@{concurrency}] OOM — batch size too large for GPU"
+                    )
+                    if last_good is not None:
+                        vanilla_metrics[concurrency] = {
+                            k: v for k, v in last_good.items() if k != _OOM_SENTINEL
+                        }
+                else:
+                    last_good = metrics
+                    print(
+                        f"  [Vanilla@{concurrency}] req/s={metrics['req_per_s']:.1f}  "
+                        f"p50={metrics['p50_ms']:.1f}ms  "
+                        f"p99={metrics['p99_ms']:.1f}ms"
+                    )
     finally:
         shared_runner.cleanup()
 
@@ -553,6 +598,8 @@ def run_benchmark(
         parity_metric=entry.parity_metric,
         parity_score=parity_score,
         dataset_label=entry.dataset_label,
+        vllm_version=vllm_version,
+        compat_mode=compat_mode,
     )
 
     path = result.save(output_dir)
@@ -584,7 +631,6 @@ def _known_parity(plugin_name: str) -> float:
         "collfm2": 0.9996,
         "nemotron_colembed": 0.9997,
         "mmbert_gliner": 1.000,
-        "deberta_gliner": 1.000,
         "mt5_gliner": 1.000,
         "deberta_gliner2": 1.000,
         "deberta_gliner_linker": 1.0000,

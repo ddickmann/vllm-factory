@@ -1,16 +1,19 @@
 """EmbeddingGemma Pooler — MEAN pool + Dense1 + Dense2 + L2 normalize.
 
 Mirrors the SentenceTransformers pipeline exactly.
+
+Implements FactoryPooler protocol — zero vLLM imports.
 """
 
 from __future__ import annotations
 
-from typing import List, Set
+from typing import List
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from vllm.v1.pool.metadata import PoolingMetadata
+
+from vllm_factory.pooling.protocol import PoolerContext, split_hidden_states
 
 
 class EmbeddingGemmaPooler(nn.Module):
@@ -22,54 +25,27 @@ class EmbeddingGemmaPooler(nn.Module):
     def __init__(self, hidden_size: int = 768, dtype: torch.dtype = torch.float32):
         super().__init__()
         self.hidden_size = hidden_size
-        # Dense layers (weights loaded from HF Hub safetensors in model.load_weights)
         self.dense1 = nn.Linear(hidden_size, 3072, bias=False, dtype=dtype)
         self.dense2 = nn.Linear(3072, hidden_size, bias=False, dtype=dtype)
 
-    def get_supported_tasks(self) -> Set[str]:
-        return {"embed"}
+    # ── FactoryPooler protocol ───────────────────────────────────────────
 
-    def get_pooling_updates(self, task=None):
-        try:
-            from vllm.model_executor.layers.pooler import PoolingParamsUpdate
-
-            return PoolingParamsUpdate()
-        except ImportError:
-            return None
+    def get_tasks(self) -> set[str]:
+        return {"embed", "plugin"}
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        pooling_metadata: PoolingMetadata,
-    ) -> List[torch.Tensor]:
-        """Apply MEAN pooling + Dense projections + L2 normalize.
+        ctx: PoolerContext,
+    ) -> list[torch.Tensor | None]:
+        sequences = split_hidden_states(hidden_states, ctx.seq_lengths)
+        outputs: List[torch.Tensor] = []
 
-        Args:
-            hidden_states: (total_tokens, hidden_size) — all sequences concatenated
-            pooling_metadata: Contains prompt_lens for splitting sequences
-
-        Returns:
-            List of 1D embedding tensors, one per sequence
-        """
-        prompt_lens = pooling_metadata.prompt_lens
-
-        # Split by sequence and MEAN pool each
-        outputs = []
-        offset = 0
-        for seq_len in prompt_lens:
-            seq_hidden = hidden_states[offset : offset + seq_len]  # (seq_len, hidden)
-
-            # MEAN pool (matching SentenceTransformers 1_Pooling behavior)
-            pooled = seq_hidden.mean(dim=0, keepdim=True)  # (1, hidden)
-
-            # Dense projections (matching 2_Dense and 3_Dense)
+        for seq_hidden in sequences:
+            pooled = seq_hidden.mean(dim=0, keepdim=True)
             projected = self.dense1(pooled)
             projected = self.dense2(projected)
-
-            # L2 normalize (matching 4_Normalize)
             normalized = F.normalize(projected, p=2, dim=-1)
-
-            outputs.append(normalized.squeeze(0))  # (hidden,)
-            offset += seq_len
+            outputs.append(normalized.squeeze(0))
 
         return outputs

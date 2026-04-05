@@ -12,6 +12,7 @@ Backbone: models.mt5.MT5Encoder — HF-oriented T5 encoder with Triton kernel re
 from __future__ import annotations
 
 import importlib.util
+import logging
 import re
 import sys
 from pathlib import Path
@@ -23,8 +24,11 @@ from vllm.config import VllmConfig
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 
 from poolers.gliner import GLiNERSpanPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 from .config import GLiNERMT5Config
+
+logger = logging.getLogger(__name__)
 
 # Load the custom MT5 encoder with Triton kernels
 _ENCODER_PATH = Path(__file__).resolve().parents[2] / "models" / "mt5" / "mt5_encoder.py"
@@ -146,7 +150,8 @@ class GLiNERMT5Model(nn.Module):
             self.projection = None
 
         # 3. GLiNER span pooler (shared implementation)
-        self.pooler = GLiNERSpanPooler(cfg)
+        self._business_pooler = GLiNERSpanPooler(cfg)
+        self.pooler = VllmPoolerAdapter(self._business_pooler, requires_token_ids=True)
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Required by vLLM's pooling runner for embedding lookup."""
@@ -211,7 +216,7 @@ class GLiNERMT5Model(nn.Module):
         projection_state = {}
         pooler_weights = {}
 
-        vllm_pooler = self.pooler.state_dict()
+        pooler_keys = set(self._business_pooler.state_dict().keys())
 
         for hf_name, tensor in weights:
             if hf_name.startswith(gliner_prefix):
@@ -233,7 +238,7 @@ class GLiNERMT5Model(nn.Module):
                 elif hf_name.startswith(prompt_rep_prefix):
                     vllm_key = hf_name.replace(prompt_rep_prefix, "prompt_proj.")
 
-                if vllm_key in vllm_pooler:
+                if vllm_key in pooler_keys:
                     pooler_weights[vllm_key] = tensor
 
         # Load backbone via vLLM weight loading (handles ColumnParallelLinear etc.)
@@ -246,7 +251,11 @@ class GLiNERMT5Model(nn.Module):
                 weight_loader(param, loaded_weight)
                 loaded_count += 1
 
-        print(f"[GLiNERMT5] Loaded backbone: {loaded_count}/{len(params_dict)} params")
+        logger.info(
+            "[GLiNERMT5] Loaded backbone: %s/%s params",
+            loaded_count,
+            len(params_dict),
+        )
 
         # Load projection
         device = next(self.backbone.parameters()).device
@@ -254,15 +263,25 @@ class GLiNERMT5Model(nn.Module):
         if self.projection is not None and projection_state:
             self.projection.load_state_dict(projection_state)
             self.projection.to(device=device, dtype=dtype)
-            print(f"[GLiNERMT5] Loaded projection: {list(projection_state.keys())}")
+            logger.info(
+                "[GLiNERMT5] Loaded projection: %s",
+                list(projection_state.keys()),
+            )
 
-        # Load pooler
+        # Load pooler (use business pooler directly to avoid _inner. prefix mismatch)
         if pooler_weights:
-            self.pooler.load_state_dict(pooler_weights, strict=False)
-            self.pooler.to(device=device, dtype=dtype)
-            print(f"[GLiNERMT5] Loaded pooler: {len(pooler_weights)}/{len(vllm_pooler)} keys")
+            self._business_pooler.load_state_dict(pooler_weights, strict=False)
+            self._business_pooler.to(device=device, dtype=dtype)
+            logger.info(
+                "[GLiNERMT5] Loaded pooler: %s/%s keys",
+                len(pooler_weights),
+                len(pooler_keys),
+            )
         else:
-            print("[GLiNERMT5] WARNING: No pooler weights loaded!")
-            print(f"  Available prefixes: {set(k.split('.')[0] for k in pooler_weights.keys())}")
+            logger.warning("[GLiNERMT5] No pooler weights loaded!")
+            logger.warning(
+                "  Available prefixes: %s",
+                set(k.split(".")[0] for k in pooler_weights.keys()),
+            )
 
         return set(name for name, _ in self.named_parameters())

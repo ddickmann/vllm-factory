@@ -14,6 +14,7 @@ vLLM 0.15.x compatible:
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Iterable, Tuple
@@ -23,6 +24,9 @@ from torch import nn
 from vllm.config import VllmConfig
 
 from poolers.gliner import GLiNERSpanPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
+
+logger = logging.getLogger(__name__)
 
 _ENCODER_PATH = (
     Path(__file__).resolve().parents[2] / "models" / "modernbert" / "modernbert_encoder.py"
@@ -117,7 +121,8 @@ class GLiNERModernBertModel(nn.Module):
         else:
             self.projection = None
 
-        self.pooler = GLiNERSpanPooler(cfg)
+        self._business_pooler = GLiNERSpanPooler(cfg)
+        self.pooler = VllmPoolerAdapter(self._business_pooler, requires_token_ids=True)
         self.pooler.to(vllm_config.model_config.dtype)
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
@@ -190,7 +195,7 @@ class GLiNERModernBertModel(nn.Module):
         projection_state = {}
 
         vllm_backbone = self.model.state_dict()
-        vllm_pooler = self.pooler.state_dict()
+        pooler_keys = set(self._business_pooler.state_dict().keys())
         vllm_projection = self.projection.state_dict() if self.projection is not None else {}
 
         for hf_name, tensor in weights:
@@ -227,17 +232,29 @@ class GLiNERModernBertModel(nn.Module):
                 elif hf_name.startswith(prompt_rep_prefix):
                     vllm_key = hf_name.replace(prompt_rep_prefix, "prompt_proj.")
 
-                if vllm_key in vllm_pooler:
+                if vllm_key in pooler_keys:
                     pooler_state[vllm_key] = tensor
 
         self.model.load_state_dict(backbone_state, strict=False)
-        print(f"[mmBERT-GLiNER] Loaded backbone: {len(backbone_state)}/{len(vllm_backbone)} keys")
+        logger.info(
+            "[mmBERT-GLiNER] Loaded backbone: %s/%s keys",
+            len(backbone_state),
+            len(vllm_backbone),
+        )
 
         if self.projection is not None and projection_state:
             self.projection.load_state_dict(projection_state, strict=False)
-            print(
-                f"[mmBERT-GLiNER] Loaded projection: {len(projection_state)}/{len(vllm_projection)} keys"
+            logger.info(
+                "[mmBERT-GLiNER] Loaded projection: %s/%s keys",
+                len(projection_state),
+                len(vllm_projection),
             )
 
-        self.pooler.load_state_dict(pooler_state, strict=False)
-        print(f"[mmBERT-GLiNER] Loaded pooler: {len(pooler_state)}/{len(vllm_pooler)} keys")
+        self._business_pooler.load_state_dict(pooler_state, strict=False)
+        logger.info(
+            "[mmBERT-GLiNER] Loaded pooler: %s/%s keys",
+            len(pooler_state),
+            len(pooler_keys),
+        )
+
+        return set(name for name, _ in self.named_parameters())

@@ -34,14 +34,13 @@ make serve P=moderncolbert PORT=8000
 ### Docker (Production)
 
 ```dockerfile
-FROM vllm/vllm-openai:v0.15.1
+FROM vllm/vllm-openai:latest
 
 COPY . /app/vllm-factory
 WORKDIR /app/vllm-factory
 
-# Install deps first — vLLM is already in the base image (installed last)
 RUN pip install -e ".[gliner]"
-RUN python -m forge.patches.pooling_extra_kwargs
+RUN python -m vllm_factory.compat.doctor
 
 EXPOSE 8000
 CMD ["vllm", "serve", "VAGOsolutions/SauerkrautLM-Multi-Reason-ModernColBERT", \
@@ -49,6 +48,12 @@ CMD ["vllm", "serve", "VAGOsolutions/SauerkrautLM-Multi-Reason-ModernColBERT", \
      "--no-enable-prefix-caching", "--no-enable-chunked-prefill", \
      "--io-processor-plugin", "moderncolbert_io", "--port", "8000"]
 ```
+
+> **Compatibility**: On vLLM versions with native IOProcessor support (0.15+),
+> no site-packages patching is required. The `doctor` command at build time
+> confirms the detected transport mode. For legacy 0.15.x deployments that
+> require `extra_kwargs` passthrough without IOProcessors, run
+> `python -m forge.patches.pooling_extra_kwargs` instead.
 
 ## Request Format
 
