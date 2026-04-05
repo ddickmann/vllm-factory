@@ -62,6 +62,28 @@ Measured on NVIDIA RTX A5000, 500 requests, 512–768 tokens, bfloat16, vLLM 0.1
 
 ---
 
+## Multi-Instance Serving (beta)
+
+Encoders are memory-bound, not compute-bound — a single vLLM instance rarely saturates the GPU's compute capacity. `vllm-factory-serve` launches multiple vLLM instances on one GPU, each running its own continuous-batching scheduler, with a thin async dispatcher that distributes requests automatically. The result is up to 2x throughput with zero code changes.
+
+| Model | Backbone | 1x | 2x | 4x | Speedup |
+|:------|:---------|---:|---:|---:|:-------:|
+| [DeBERTa GLiNER2](https://huggingface.co/fastino/gliner2-large-v1) | DeBERTa v3 (304M) | 133 req/s | 164 req/s | 229 req/s | **1.72x** |
+| [MMBert GLiNER](https://huggingface.co/VAGOsolutions/SauerkrautLM-GLiNER) | ModernBERT (150M) | 159 req/s | 255 req/s | 313 req/s | **1.98x** |
+| [MT5 GLiNER X-Large](https://huggingface.co/knowledgator/gliner-x-large) | mT5 (800M) | 142 req/s | 204 req/s | 236 req/s | **1.66x** |
+
+> NVIDIA RTX A5000, 200 requests, NuNER dataset, bfloat16, max 32 batch size per instance, vLLM 0.19.0.
+
+```bash
+vllm-factory-serve /tmp/gliner2-vllm \
+  --num-instances 4 --max-batch-size 32 \
+  --io-processor-plugin deberta_gliner2_io
+```
+
+When `--num-instances 1` (default), the command is equivalent to `vllm serve`. With N > 1, it launches N backend workers on consecutive ports and a lightweight reverse proxy on the user-facing port. GPU memory is automatically partitioned across instances.
+
+---
+
 ## Why vLLM Factory?
 
 Decoder-based LLM serving is a solved problem. Encoder-based serving is not.
@@ -150,6 +172,8 @@ make test-serve P=embeddinggemma   # Fastest model — starts server, runs test,
 ## Serving — all 12 models
 
 Every plugin is served with `vllm serve` + `--io-processor-plugin`. The IOProcessor handles all tokenization, formatting, and output decoding server-side. Clients send simple JSON.
+
+> **Multi-instance (beta):** Add `--num-instances N` via `vllm-factory-serve` for up to 2x throughput on memory-bound encoders. See [Multi-Instance Serving](#multi-instance-serving-beta).
 
 ### Embedding
 

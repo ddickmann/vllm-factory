@@ -185,7 +185,7 @@ class ModelServer:
 
         # Reduce noise
         cmd.extend(["--uvicorn-log-level", "warning"])
-        cmd.append("--disable-log-requests")
+        cmd.append("--disable-log-stats")
 
         # Extra args
         cmd.extend(self.extra_args)

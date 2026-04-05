@@ -29,6 +29,7 @@ dependencies = [
     "huggingface-hub",
     "pillow",
     "requests",
+    "aiohttp>=3.9",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +59,7 @@ kernels = [
 
 [project.scripts]
 vllm-factory-prep = "forge.__main__:main"
+vllm-factory-serve = "forge.serve_cli:main"
 
 [project.entry-points."vllm.general_plugins"]
 embeddinggemma = "plugins.embeddinggemma:register"
@@ -72,6 +74,7 @@ colqwen3 = "plugins.colqwen3:register"
 collfm2 = "plugins.collfm2:register"
 nemotron_colembed = "plugins.nemotron_colembed:register"
 lfm2_colbert = "plugins.lfm2_colbert:register"
+composable_pooling = "vllm_factory.composable:register"
 
 [project.entry-points."vllm.io_processor_plugins"]
 mmbert_gliner_io = "plugins.mmbert_gliner.io_processor:get_processor_cls"
@@ -86,6 +89,7 @@ modernbert_gliner_rerank_io = "plugins.modernbert_gliner_rerank.io_processor:get
 nemotron_colembed_io = "plugins.nemotron_colembed.io_processor:get_processor_cls"
 lfm2_colbert_io = "plugins.lfm2_colbert.io_processor:get_processor_cls"
 embeddinggemma_io = "plugins.embeddinggemma.io_processor:get_processor_cls"
+generic_pooling_io = "vllm_factory.composable.io_processor:get_processor_cls"
 
 [project.urls]
 Homepage = "https://github.com/ddickmann/vllm-factory"
