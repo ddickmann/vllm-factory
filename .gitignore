@@ -8,7 +8,7 @@ build/
 .eggs/
 *.so
 .venv/
-.venv-reference/
+.venv-*/
 venv/
 .env
 *.pt
