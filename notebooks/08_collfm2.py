@@ -7,9 +7,10 @@
 # **2,508 req/s** server throughput — the fastest model in the repo.
 
 # %%
-import sys
 import os
+import sys
 import time
+
 import numpy as np
 import torch
 

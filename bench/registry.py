@@ -67,6 +67,7 @@ def _ensure_scifact():
         return
     import io
     import zipfile
+
     import requests as req
 
     print("  [dataset] Downloading SciFact corpus from BEIR...")

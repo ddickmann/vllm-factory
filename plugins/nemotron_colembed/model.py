@@ -18,11 +18,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from vllm.config import VllmConfig
-from vllm_factory.pooling.protocol import PassthroughPooler
-from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 from vllm.model_executor.models.qwen3_vl import Qwen3VLForConditionalGeneration
 from vllm.model_executor.models.utils import AutoWeightsLoader, WeightsMapper
+
+from vllm_factory.pooling.protocol import PassthroughPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 logger = logging.getLogger(__name__)
 

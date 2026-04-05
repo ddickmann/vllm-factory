@@ -14,7 +14,7 @@ Implements FactoryPooler protocol — zero vLLM imports.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List
 
 import torch
 import torch.nn as nn

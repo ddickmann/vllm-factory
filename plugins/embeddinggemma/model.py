@@ -82,11 +82,12 @@ class EmbeddingGemmaModel(nn.Module):
     def _load_dense_weights(self, model_name_or_path: str) -> None:
         """Load SentenceTransformers Dense projection weights from HF repo."""
         try:
-            from huggingface_hub import hf_hub_download
             import safetensors.torch
+            from huggingface_hub import hf_hub_download
         except ImportError:
-            logger.warning("huggingface_hub or safetensors not available; "
-                           "Dense projection weights not loaded")
+            logger.warning(
+                "huggingface_hub or safetensors not available; Dense projection weights not loaded"
+            )
             return
 
         for layer_idx, layer_name, attr in [
@@ -94,8 +95,7 @@ class EmbeddingGemmaModel(nn.Module):
             (3, "3_Dense", "dense2"),
         ]:
             try:
-                path = hf_hub_download(model_name_or_path,
-                                       f"{layer_name}/model.safetensors")
+                path = hf_hub_download(model_name_or_path, f"{layer_name}/model.safetensors")
                 state = safetensors.torch.load_file(path)
                 linear = getattr(self._business_pooler, attr)
                 if "linear.weight" in state:

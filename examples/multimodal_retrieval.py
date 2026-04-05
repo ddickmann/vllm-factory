@@ -15,10 +15,11 @@ Then run:
     python examples/multimodal_retrieval.py
 """
 
-import requests
 import base64
 import math
 from pathlib import Path
+
+import requests
 
 BASE_URL = "http://localhost:8000"
 MODEL = "VAGOsolutions/SauerkrautLM-ColQwen3-1.7b-Turbo-v0.1"

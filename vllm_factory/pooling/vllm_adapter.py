@@ -13,14 +13,14 @@ from typing import Any
 
 import torch
 
-from vllm_factory.pooling.protocol import FactoryPooler, PassthroughPooler, PoolerContext
-
 # ── vLLM imports (the ONLY place in the project that touches these) ──────────
 from vllm.config import PoolerConfig
 from vllm.model_executor.layers.pooler.abstract import Pooler
 from vllm.model_executor.layers.pooler.common import PoolingParamsUpdate
 from vllm.model_executor.layers.pooler.tokwise import pooler_for_token_embed
 from vllm.v1.pool.metadata import PoolingMetadata
+
+from vllm_factory.pooling.protocol import FactoryPooler, PassthroughPooler, PoolerContext
 
 logger = logging.getLogger(__name__)
 

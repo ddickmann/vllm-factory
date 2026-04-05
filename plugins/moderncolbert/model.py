@@ -41,11 +41,12 @@ _modernbert_encoder_mod = _import_modernbert_encoder()
 ModernBertModel = _modernbert_encoder_mod.ModernBertModel
 
 from vllm.config import VllmConfig  # noqa: E402
-from vllm_factory.pooling.protocol import PassthroughPooler  # noqa: E402
-from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter  # noqa: E402
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader  # noqa: E402
 from vllm.model_executor.models.interfaces_base import attn_type, default_pooling_type  # noqa: E402
 from vllm.sequence import IntermediateTensors  # noqa: E402
+
+from vllm_factory.pooling.protocol import PassthroughPooler  # noqa: E402
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter  # noqa: E402
 
 from .config import ModernColBERTConfig  # noqa: E402
 
@@ -246,15 +247,11 @@ class ModernBertForColBERT(nn.Module):
                     )
                 )
             except Exception as e:
-                logger.warning(
-                    "Could not locate 1_Dense/model.safetensors: %s", e
-                )
+                logger.warning("Could not locate 1_Dense/model.safetensors: %s", e)
                 return False
 
         if not dense_file.exists():
-            logger.warning(
-                "1_Dense/model.safetensors not found at %s", dense_file
-            )
+            logger.warning("1_Dense/model.safetensors not found at %s", dense_file)
             return False
 
         logger.info("Loading ColBERT projection from %s", dense_file)
@@ -266,8 +263,6 @@ class ModernBertForColBERT(nn.Module):
                     "weight" in key.lower() or tensor.dim() == 2
                 ) and self.colbert_linear.weight.shape == tensor.shape:
                     self.colbert_linear.weight.data.copy_(tensor)
-                    logger.info(
-                        "colbert_linear.weight loaded: %s", tensor.shape
-                    )
+                    logger.info("colbert_linear.weight loaded: %s", tensor.shape)
                     loaded_ok = True
         return loaded_ok

@@ -27,6 +27,7 @@ class VllmCapabilities:
 def _vllm_version() -> str | None:
     try:
         import vllm
+
         return getattr(vllm, "__version__", None)
     except ImportError:
         return None
@@ -35,6 +36,7 @@ def _vllm_version() -> str | None:
 def _has_entry_point_group(group: str) -> tuple[bool, list[str]]:
     try:
         from importlib.metadata import entry_points
+
         eps = entry_points(group=group)
         names = [ep.name for ep in eps]
         return len(names) > 0, names
@@ -49,6 +51,7 @@ def _can_import(dotted_path: str) -> bool:
     module_path, attr_name = parts
     try:
         import importlib
+
         mod = importlib.import_module(module_path)
         return hasattr(mod, attr_name)
     except Exception:
@@ -62,12 +65,8 @@ def detect() -> VllmCapabilities:
     has_general, general_names = _has_entry_point_group("vllm.general_plugins")
     has_io, io_names = _has_entry_point_group("vllm.io_processor_plugins")
 
-    has_interface = _can_import(
-        "vllm.plugins.io_processors.interface.IOProcessor"
-    )
-    has_response = _can_import(
-        "vllm.entrypoints.pooling.pooling.protocol.IOProcessorResponse"
-    )
+    has_interface = _can_import("vllm.plugins.io_processors.interface.IOProcessor")
+    has_response = _can_import("vllm.entrypoints.pooling.pooling.protocol.IOProcessorResponse")
 
     pooling_accepts_plugin = has_interface and has_response
 
@@ -75,6 +74,7 @@ def detect() -> VllmCapabilities:
     if has_interface:
         try:
             from vllm.engine.arg_utils import EngineArgs
+
             io_cli = hasattr(EngineArgs, "io_processor_plugin") or _can_import(
                 "vllm.engine.arg_utils.EngineArgs"
             )

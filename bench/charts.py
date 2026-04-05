@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -112,7 +113,7 @@ def chart_parity(results: list[BenchResult], output_dir: Path):
     fig.tight_layout()
 
     _save(fig, output_dir, "parity")
-    print(f"  Chart saved: parity.svg / .png")
+    print("  Chart saved: parity.svg / .png")
 
 
 # ---------------------------------------------------------------------------

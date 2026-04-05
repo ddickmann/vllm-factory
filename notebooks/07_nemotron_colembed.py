@@ -8,9 +8,10 @@
 # Serves via vLLM with `--no-enable-prefix-caching` (bidirectional attention workaround).
 
 # %%
-import sys
 import os
+import sys
 import time
+
 import numpy as np
 import torch
 

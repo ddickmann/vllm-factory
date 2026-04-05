@@ -25,15 +25,14 @@ jobs:
           pip install "ruff>=0.4" "pytest>=7.0" "packaging>=24.0" "build"
 
       - name: Lint
-        run: ruff check forge/ plugins/ kernels/ poolers/ tests/ --select E,F,I,W --ignore E501
+        run: ruff check forge/ plugins/ kernels/ poolers/ tests/ vllm_factory/ --select E,F,I,W --ignore E501
 
       - name: Format check
-        run: ruff format --check forge/ plugins/ tests/
+        run: ruff format --check forge/ plugins/ tests/ vllm_factory/
 
       - name: Import and syntax smoke checks
         run: |
-          python -m compileall forge models poolers kernels plugins tests
-          python -c "import importlib; importlib.import_module('forge.patches.pooling_extra_kwargs'); print('patch_import_ok')"
+          python -m compileall forge models poolers kernels plugins tests vllm_factory
 
       - name: Plugin import smoke test
         run: |

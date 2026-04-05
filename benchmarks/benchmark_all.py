@@ -6,6 +6,7 @@ Measures req/s for both implementations at ~512 tokens.
 """
 import gc
 import time
+
 import torch
 from transformers import AutoTokenizer
 
@@ -146,7 +147,7 @@ if __name__ == "__main__":
     vllm_r = bench_vllm()
 
     print(f"\n{'=' * 70}")
-    print(f"  RESULTS — EmbeddingGemma")
+    print("  RESULTS — EmbeddingGemma")
     print(f"  Sequence length: {vanilla['seq_len']} tokens")
     print(f"{'=' * 70}")
     print(f"\n  {'Metric':<25} {'Vanilla (ST)':<20} {'vLLM Factory':<20} {'Speedup'}")

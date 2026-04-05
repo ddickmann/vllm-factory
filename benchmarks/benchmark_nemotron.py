@@ -5,8 +5,8 @@ Benchmark: Nemotron-ColEmbed (4B) — vLLM in-process (no vanilla reference)
 Measures req/s for bidirectional Qwen3-VL ColBERT at ~512 tokens with batch=1,8.
 """
 import gc
-import os
 import time
+
 import torch
 
 TEXT_512 = (
@@ -41,9 +41,8 @@ N_RUNS = 20
 
 
 def bench_vllm():
-    import plugins.nemotron_colembed  # noqa: register plugin
-    from vllm import LLM
     from transformers import AutoTokenizer
+    from vllm import LLM
 
     print("  Loading vLLM...")
     llm = LLM(
@@ -92,7 +91,7 @@ if __name__ == "__main__":
 
     r = bench_vllm()
     print(f"\n{'=' * 70}")
-    print(f"  RESULTS — Nemotron-ColEmbed (vLLM only, no vanilla reference)")
+    print("  RESULTS — Nemotron-ColEmbed (vLLM only, no vanilla reference)")
     print(f"{'=' * 70}")
     for bs in [1, 8]:
         print(f"  batch={bs:<3} req/s: {r[f'batch{bs}_rps']}")

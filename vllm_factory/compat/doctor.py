@@ -25,10 +25,18 @@ def run_doctor() -> None:
     lines.append(f"  vLLM version:              {caps.version or 'NOT INSTALLED'}")
     lines.append(f"  general_plugins group:     {'YES' if caps.has_general_plugin_group else 'NO'}")
     lines.append(f"  io_processor_plugins group:{'YES' if caps.has_io_processor_group else 'NO'}")
-    lines.append(f"  IOProcessor interface:     {'YES' if caps.has_io_processor_interface else 'NO'}")
-    lines.append(f"  IOProcessorResponse:       {'YES' if caps.has_io_processor_response else 'NO'}")
-    lines.append(f"  pooling accepts plugin:    {'YES' if caps.pooling_accepts_plugin_task else 'NO'}")
-    lines.append(f"  --io-processor-plugin CLI: {'YES' if caps.io_processor_cli_arg_supported else 'NO'}")
+    lines.append(
+        f"  IOProcessor interface:     {'YES' if caps.has_io_processor_interface else 'NO'}"
+    )
+    lines.append(
+        f"  IOProcessorResponse:       {'YES' if caps.has_io_processor_response else 'NO'}"
+    )
+    lines.append(
+        f"  pooling accepts plugin:    {'YES' if caps.pooling_accepts_plugin_task else 'NO'}"
+    )
+    lines.append(
+        f"  --io-processor-plugin CLI: {'YES' if caps.io_processor_cli_arg_supported else 'NO'}"
+    )
     lines.append("")
 
     native_ok = caps.has_io_processor_interface and caps.has_io_processor_response
@@ -40,6 +48,7 @@ def run_doctor() -> None:
     lines.append("")
 
     from vllm_factory.compat.attention_mask_compat import is_attention_mask_patch_active
+
     am_active = is_attention_mask_patch_active()
     lines.append(f"  Attention-mask patch:       {'ACTIVE' if am_active else 'NOT APPLIED'}")
     lines.append("    (only needed by linker/rerank plugins)")

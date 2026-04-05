@@ -10,12 +10,13 @@ import torch.nn as nn
 from huggingface_hub import hf_hub_download
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.linear import ReplicatedLinear
-from vllm_factory.pooling.protocol import PassthroughPooler
-from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 from vllm.model_executor.models.interfaces import HasInnerState, IsHybrid
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 from vllm.model_executor.models.lfm2 import Lfm2ForCausalLM, Lfm2Model
 from vllm.sequence import IntermediateTensors
+
+from vllm_factory.pooling.protocol import PassthroughPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 from .config import LFM2ColBERTConfig
 
@@ -103,9 +104,7 @@ class LFM2ForColBERT(nn.Module, HasInnerState, IsHybrid):
                 self._projection_loaded = True
 
         except Exception as e:
-            logger.warning(
-                "LFM2ForColBERT: Could not load projection from 1_Dense: %s", e
-            )
+            logger.warning("LFM2ForColBERT: Could not load projection from 1_Dense: %s", e)
             logger.info(
                 "LFM2ForColBERT: Assuming projection weights were loaded via standard loader."
             )

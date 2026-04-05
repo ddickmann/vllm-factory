@@ -21,8 +21,7 @@ except ImportError:
 # PoolingMetadata / PoolingTensors ------------------------------------------
 PoolingTensors = None
 try:
-    from vllm.model_executor.pooling_metadata import PoolingMetadata
-    from vllm.model_executor.pooling_metadata import PoolingTensors
+    from vllm.model_executor.pooling_metadata import PoolingMetadata, PoolingTensors
 except ImportError:
     from vllm.v1.pool.metadata import PoolingMetadata  # noqa: F401
 

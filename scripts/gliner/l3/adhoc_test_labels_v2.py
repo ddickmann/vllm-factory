@@ -2,10 +2,14 @@
 
 Ad-hoc script — not a supported test harness. See docs/gliner/README.md.
 Init LLM first, then load labels encoder to avoid fork memory issues."""
-import os, re, torch, json, sys
+import json
+import os
+import re
+
+import torch
+
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-import plugins.deberta_gliner_linker
 from plugins.deberta_gliner_linker import get_model_path
 
 model_path = get_model_path()
@@ -24,8 +28,8 @@ llm = LLM(
 print("LLM initialized!", flush=True)
 
 # Step 2: Now load labels encoder
-from transformers import AutoTokenizer, DebertaConfig, DebertaModel
 from huggingface_hub import hf_hub_download
+from transformers import AutoTokenizer, DebertaConfig, DebertaModel
 
 tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
 

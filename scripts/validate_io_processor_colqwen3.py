@@ -37,8 +37,8 @@ def test_entry_point_discovery():
 
 
 def test_class_resolution(qualname: str):
-    from vllm.utils.import_utils import resolve_obj_by_qualname
     from vllm.plugins.io_processors.interface import IOProcessor
+    from vllm.utils.import_utils import resolve_obj_by_qualname
 
     cls = resolve_obj_by_qualname(qualname)
     assert cls.__name__ == "ColQwen3IOProcessor"
@@ -58,7 +58,7 @@ def test_abc_contract(cls):
 # ---------------------------------------------------------------------------
 
 def test_parse_request():
-    from plugins.colqwen3.io_processor import ColQwen3IOProcessor, ColQwen3Input
+    from plugins.colqwen3.io_processor import ColQwen3Input, ColQwen3IOProcessor
 
     proc = ColQwen3IOProcessor.__new__(ColQwen3IOProcessor)
     proc._lock = threading.Lock()
@@ -92,8 +92,9 @@ def test_parse_request():
 
 
 def test_params_contract():
-    from plugins.colqwen3.io_processor import ColQwen3IOProcessor
     from vllm.pooling_params import PoolingParams
+
+    from plugins.colqwen3.io_processor import ColQwen3IOProcessor
 
     proc = ColQwen3IOProcessor.__new__(ColQwen3IOProcessor)
     proc._lock = threading.Lock()
@@ -120,9 +121,9 @@ def test_params_contract():
 
 def test_preprocessing_parity():
     """Compare Forge BaseProcessor preprocess with IOProcessor pre_process."""
+
+    from plugins.colqwen3.io_processor import ColQwen3Input, ColQwen3IOProcessor
     from plugins.colqwen3.processor import ColQwen3Processor
-    from plugins.colqwen3.io_processor import ColQwen3IOProcessor, ColQwen3Input
-    from vllm.pooling_params import PoolingParams
 
     text = "What is machine learning?"
 
@@ -164,9 +165,10 @@ def test_preprocessing_parity():
 
 def test_postprocessing_parity():
     """Compare Forge postprocess with IOProcessor post_process."""
-    from plugins.colqwen3.processor import ColQwen3Processor
+    from vllm.outputs import PoolingOutput, PoolingRequestOutput
+
     from plugins.colqwen3.io_processor import ColQwen3IOProcessor
-    from vllm.outputs import PoolingRequestOutput, PoolingOutput
+    from plugins.colqwen3.processor import ColQwen3Processor
 
     # Synthetic 2D embeddings (8 tokens × 128 dims)
     raw = torch.randn(8, 128).tolist()
@@ -200,8 +202,9 @@ def test_postprocessing_parity():
 
 
 def test_response_contract():
-    from plugins.colqwen3.io_processor import ColQwen3IOProcessor
     from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
+
+    from plugins.colqwen3.io_processor import ColQwen3IOProcessor
 
     proc = ColQwen3IOProcessor.__new__(ColQwen3IOProcessor)
 
@@ -277,7 +280,7 @@ def main():
     all_pass &= ok
 
     print(f"\n{'='*60}")
-    print(f"  SUMMARY")
+    print("  SUMMARY")
     print(f"{'='*60}")
     for name, passed in results.items():
         status = "PASS" if passed else "FAIL"

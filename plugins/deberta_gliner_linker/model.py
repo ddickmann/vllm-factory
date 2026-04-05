@@ -26,10 +26,11 @@ from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
 import torch
-from torch import nn
 from gliner.modeling.span_rep import SpanRepLayer
+from torch import nn
 from transformers import DebertaConfig
 from vllm.config import VllmConfig
+
 from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 from .config import GLiNERLinkerConfig

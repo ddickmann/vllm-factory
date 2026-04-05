@@ -266,9 +266,9 @@ def vllm_mt5_gliner():
     except Exception:
         pass
 
+    from transformers import AutoTokenizer
     from vllm import LLM, PoolingParams
     from vllm.inputs import TokensPrompt
-    from transformers import AutoTokenizer
 
     model_dir = "/tmp/gliner-x-large-vllm"
     print(f"\n[mt5_gliner] Loading vLLM({model_dir})...")
@@ -343,9 +343,8 @@ def vllm_mt5_gliner():
 
 def vllm_lfm2_colbert():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import plugins.lfm2_colbert  # noqa: register plugin
-    from vllm import LLM
     from transformers import AutoTokenizer
+    from vllm import LLM
 
     MODEL = "LiquidAI/LFM2-ColBERT-350M"
     print(f"\n[lfm2_colbert] Loading vLLM({MODEL})...")
@@ -383,8 +382,8 @@ def vllm_lfm2_colbert():
 
 
 def vllm_embeddinggemma():
-    from vllm import LLM
     from transformers import AutoTokenizer
+    from vllm import LLM
 
     MODEL = "unsloth/embeddinggemma-300m"
     print(f"\n[embeddinggemma] Loading vLLM({MODEL})...")
@@ -422,10 +421,9 @@ def vllm_embeddinggemma():
 
 def vllm_nemotron_colembed():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import plugins.nemotron_colembed  # noqa: register plugin
-    from vllm import LLM
     from transformers import AutoProcessor
     from transformers.image_utils import load_image
+    from vllm import LLM
 
     MODEL = "nvidia/nemotron-colembed-vl-4b-v2"
     print(f"\n[nemotron_colembed] Loading vLLM({MODEL})...")

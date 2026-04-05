@@ -33,9 +33,8 @@ def extract_sequences(
     else:
         try:
             from vllm.model_executor.pooling_metadata import PoolingTensors
-            pt = PoolingTensors.from_pooling_metadata(
-                pooling_metadata, hidden_states.device
-            )
+
+            pt = PoolingTensors.from_pooling_metadata(pooling_metadata, hidden_states.device)
             prompt_lens = pt.prompt_lens.tolist()
         except Exception:
             prompt_lens = [hidden_states.shape[0]]
@@ -43,7 +42,7 @@ def extract_sequences(
     sequences: list[torch.Tensor] = []
     offset = 0
     for seq_len in prompt_lens:
-        sequences.append(hidden_states[offset:offset + seq_len])
+        sequences.append(hidden_states[offset : offset + seq_len])
         offset += seq_len
     return sequences
 
@@ -80,17 +79,19 @@ def build_pooler_context(
 
     while len(pp_list) < len(seqs):
         pp_list.append(None)
-    pp_list = pp_list[:len(seqs)]
+    pp_list = pp_list[: len(seqs)]
 
     contexts = []
     for i, seq_hs in enumerate(seqs):
         ek = get_extra_kwargs(pp_list[i]) or {}
-        contexts.append(SequenceContext(
-            hidden_states=seq_hs,
-            extra_kwargs=ek,
-            seq_len=seq_hs.shape[0],
-            token_ids=ek.get("input_ids"),
-        ))
+        contexts.append(
+            SequenceContext(
+                hidden_states=seq_hs,
+                extra_kwargs=ek,
+                seq_len=seq_hs.shape[0],
+                token_ids=ek.get("input_ids"),
+            )
+        )
 
     return PoolerContext(
         sequences=contexts,

@@ -6,8 +6,8 @@ Measures req/s for both at 512 tokens with batch=1,8,32.
 """
 import gc
 import os
-import string
 import time
+
 import torch
 from transformers import AutoTokenizer
 
@@ -82,7 +82,6 @@ def bench_vanilla():
 
 def bench_vllm():
     """vLLM benchmark."""
-    import plugins.moderncolbert  # noqa: register plugin
     from vllm import LLM
 
     os.environ["VLLM_ALLOW_LONG_MAX_MODEL_LEN"] = "1"

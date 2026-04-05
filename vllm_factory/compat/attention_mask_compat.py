@@ -39,12 +39,11 @@ def ensure_attention_mask_patch() -> bool:
         from plugins.deberta_gliner_linker.vllm_pooling_attention_mask import (
             apply_pooling_attention_mask_patch,
         )
+
         result = apply_pooling_attention_mask_patch()
         _applied = result
         if result:
-            logger.info(
-                "Attention-mask compat patch applied for linker/rerank plugins"
-            )
+            logger.info("Attention-mask compat patch applied for linker/rerank plugins")
         return result
     except ImportError:
         logger.warning(
@@ -58,6 +57,7 @@ def is_attention_mask_patch_active() -> bool:
     """Check whether the attention mask patch is currently active."""
     try:
         from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
         return getattr(GPUModelRunner, "_gliner_linker_preprocess_patched", False)
     except ImportError:
         return False

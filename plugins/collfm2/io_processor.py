@@ -27,6 +27,7 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
+
 from vllm_factory.io.base import (
     FactoryIOProcessor,
     PoolingRequestOutput,
@@ -189,9 +190,9 @@ class ColLFM2IOProcessor(FactoryIOProcessor):
         if is_image and emb.shape[0] > 1:
             emb = emb[1:]
 
-        return base64.b64encode(
-            emb.cpu().contiguous().to(torch.float32).numpy().tobytes()
-        ).decode("ascii")
+        return base64.b64encode(emb.cpu().contiguous().to(torch.float32).numpy().tobytes()).decode(
+            "ascii"
+        )
 
 
 def get_processor_cls() -> str:

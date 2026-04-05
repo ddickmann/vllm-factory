@@ -15,7 +15,7 @@ Input metadata comes via PoolerContext.extra_kwargs per sequence:
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import List
 
 import torch
 import torch.nn as nn
@@ -63,17 +63,12 @@ class GLiNERLinkerPooler(nn.Module):
             import logging
 
             logging.getLogger(__name__).warning("Pooler warmup fallback: %s", e)
-            dummy = torch.zeros(
-                4, device=hidden_states.device, dtype=hidden_states.dtype
-            )
+            dummy = torch.zeros(4, device=hidden_states.device, dtype=hidden_states.dtype)
             return [dummy]
 
         if not ctx.extra_kwargs:
             return [
-                torch.zeros(
-                    4, device=hidden_states.device, dtype=torch.float32
-                )
-                for _ in sequences
+                torch.zeros(4, device=hidden_states.device, dtype=torch.float32) for _ in sequences
             ]
 
         outputs: List[torch.Tensor] = []
@@ -114,7 +109,9 @@ class GLiNERLinkerPooler(nn.Module):
 
             threshold = float(add.get("threshold", 0.5))
             scores = self._run_scorer(we, le)
-            span_idx, span_mask = extract_spans_from_tokens(scores, labels=None, threshold=threshold)
+            span_idx, span_mask = extract_spans_from_tokens(
+                scores, labels=None, threshold=threshold
+            )
             span_rep = self._span_rep_layer(we, span_idx * span_mask.unsqueeze(-1).long())
             span_logits = torch.einsum("BND,BCD->BNC", span_rep, le)
 
@@ -166,24 +163,18 @@ class GLiNERLinkerPooler(nn.Module):
             object.__setattr__(
                 self,
                 "_tokenizer",
-                AutoTokenizer.from_pretrained(
-                    self._model_config.model, use_fast=True
-                ),
+                AutoTokenizer.from_pretrained(self._model_config.model, use_fast=True),
             )
 
         all_embs = []
         for label in label_texts:
-            enc = self._tokenizer(
-                label, return_tensors="pt", truncation=True, max_length=512
-            )
+            enc = self._tokenizer(label, return_tensors="pt", truncation=True, max_length=512)
             input_ids = enc["input_ids"].to(device)
             attention_mask = enc["attention_mask"].to(device)
             output = self._labels_encoder(input_ids=input_ids)
             hs = output.last_hidden_state
             mask_expanded = attention_mask.unsqueeze(-1).expand(hs.size()).float()
-            mean = (hs * mask_expanded).sum(1) / mask_expanded.sum(1).clamp(
-                min=1e-9
-            )
+            mean = (hs * mask_expanded).sum(1) / mask_expanded.sum(1).clamp(min=1e-9)
             all_embs.append(mean.squeeze(0))
 
         return torch.stack(all_embs, dim=0)
@@ -197,8 +188,6 @@ class GLiNERLinkerPooler(nn.Module):
         label_rep = label_rep.view(B, 1, C, 2, H)
         token_rep = token_rep.expand(-1, -1, C, -1, -1).permute(3, 0, 1, 2, 4)
         label_rep = label_rep.expand(-1, W, -1, -1, -1).permute(3, 0, 1, 2, 4)
-        cat = torch.cat(
-            [token_rep[0], label_rep[0], token_rep[1] * label_rep[1]], dim=-1
-        )
+        cat = torch.cat([token_rep[0], label_rep[0], token_rep[1] * label_rep[1]], dim=-1)
         scores = self._scorer_out_mlp(cat)
         return scores

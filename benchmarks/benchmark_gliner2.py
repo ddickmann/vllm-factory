@@ -7,6 +7,7 @@ Measures req/s for entity extraction at ~512 tokens with batch=1,8,32.
 import gc
 import os
 import time
+
 import torch
 
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -43,11 +44,13 @@ N_RUNS = 20
 
 
 def bench_vllm():
+    from transformers import AutoTokenizer
     from vllm import LLM, PoolingParams
     from vllm.inputs import TokensPrompt
-    from transformers import AutoTokenizer
+
     from plugins.deberta_gliner2.processor import (
-        build_schema_for_entities, preprocess,
+        build_schema_for_entities,
+        preprocess,
     )
 
     print("  Loading vLLM...")
@@ -100,7 +103,7 @@ if __name__ == "__main__":
 
     r = bench_vllm()
     print(f"\n{'=' * 70}")
-    print(f"  RESULTS — GLiNER2")
+    print("  RESULTS — GLiNER2")
     print(f"{'=' * 70}")
     for bs in [1, 8, 32]:
         print(f"  batch={bs:<3} req/s: {r[f'batch{bs}_rps']}")

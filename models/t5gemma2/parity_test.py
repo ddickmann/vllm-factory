@@ -46,6 +46,8 @@ _CTX = _init_vllm_env()
 try:
     from transformers import (
         AutoTokenizer,
+    )
+    from transformers import (
         T5Gemma2ForConditionalGeneration as HFT5Gemma2ForConditionalGeneration,
     )
 except ImportError:

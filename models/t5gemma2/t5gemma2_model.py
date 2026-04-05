@@ -8,12 +8,7 @@ from itertools import islice
 import torch
 import torch.nn.functional as F
 from torch import nn
-
-from kernels.fused_gemma_rms_norm_dropout_residual import (
-    fused_gemma_rms_norm_dropout_residual,
-)
-from kernels.fused_rope_global import fused_rope_global_apply
-from vllm.config import CacheConfig, VllmConfig
+from vllm.config import VllmConfig
 from vllm.distributed import get_pp_group
 from vllm.model_executor.layers.layernorm import GemmaRMSNorm
 from vllm.model_executor.layers.linear import (
@@ -26,6 +21,11 @@ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.interfaces import SupportsLoRA
 from vllm.model_executor.models.utils import make_layers
 from vllm.sequence import IntermediateTensors
+
+from kernels.fused_gemma_rms_norm_dropout_residual import (
+    fused_gemma_rms_norm_dropout_residual,
+)
+from kernels.fused_rope_global import fused_rope_global_apply
 
 from .config import (
     T5Gemma2Config,

@@ -11,7 +11,6 @@ For each of the 12 plugins:
 import argparse
 import base64
 import json
-import math
 import os
 import signal
 import subprocess

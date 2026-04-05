@@ -5,11 +5,12 @@
 # **10.9× throughput** vs vanilla HF pipeline. cos_sim = 1.000000 parity.
 
 # %%
-import sys
 import os
+import sys
 import time
-import torch
+
 import numpy as np
+import torch
 
 ROOT = os.path.abspath(os.path.join(os.getcwd(), ".."))
 sys.path.insert(0, ROOT)

@@ -5,7 +5,7 @@ Implements FactoryPooler protocol — zero vLLM imports.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import List
 
 import torch
 import torch.nn as nn
@@ -41,20 +41,13 @@ class GLiNERRerankPooler(nn.Module):
         except Exception as e:
             import logging
 
-            logging.getLogger(__name__).warning(
-                "Rerank pooler warmup fallback: %s", e
-            )
-            dummy = torch.zeros(
-                4, device=hidden_states.device, dtype=hidden_states.dtype
-            )
+            logging.getLogger(__name__).warning("Rerank pooler warmup fallback: %s", e)
+            dummy = torch.zeros(4, device=hidden_states.device, dtype=hidden_states.dtype)
             return [dummy]
 
         if not ctx.extra_kwargs:
             return [
-                torch.zeros(
-                    4, device=hidden_states.device, dtype=torch.float32
-                )
-                for _ in sequences
+                torch.zeros(4, device=hidden_states.device, dtype=torch.float32) for _ in sequences
             ]
 
         cfg = self._model_config.hf_config
@@ -99,16 +92,14 @@ class GLiNERRerankPooler(nn.Module):
             tok_b = tok.unsqueeze(0)
             tl = torch.tensor([text_length], device=dev, dtype=torch.long)
 
-            prompts, p_mask, words_pre, w_mask = (
-                extract_prompt_features_and_word_embeddings(
-                    class_token_index,
-                    tok_b,
-                    input_ids_b,
-                    attn_b,
-                    tl,
-                    wmask_b,
-                    embed_ent_token=embed_ent_token,
-                )
+            prompts, p_mask, words_pre, w_mask = extract_prompt_features_and_word_embeddings(
+                class_token_index,
+                tok_b,
+                input_ids_b,
+                attn_b,
+                tl,
+                wmask_b,
+                embed_ent_token=embed_ent_token,
             )
 
             words = self._run_lstm(words_pre, w_mask)
@@ -126,9 +117,7 @@ class GLiNERRerankPooler(nn.Module):
     @staticmethod
     def _to_tensor(x, device, dtype=None) -> torch.Tensor:
         if isinstance(x, torch.Tensor):
-            return (
-                x.to(device=device, dtype=dtype) if dtype else x.to(device=device)
-            )
+            return x.to(device=device, dtype=dtype) if dtype else x.to(device=device)
         t = torch.tensor(x, device=device)
         return t.to(dtype) if dtype else t
 
@@ -151,7 +140,5 @@ class GLiNERRerankPooler(nn.Module):
         label_rep = label_rep.view(B, 1, C, 2, H)
         token_rep = token_rep.expand(-1, -1, C, -1, -1).permute(3, 0, 1, 2, 4)
         label_rep = label_rep.expand(-1, W, -1, -1, -1).permute(3, 0, 1, 2, 4)
-        cat = torch.cat(
-            [token_rep[0], label_rep[0], token_rep[1] * label_rep[1]], dim=-1
-        )
+        cat = torch.cat([token_rep[0], label_rep[0], token_rep[1] * label_rep[1]], dim=-1)
         return self._scorer_out_mlp(cat)

@@ -17,8 +17,6 @@ import torch
 import torch.nn as nn
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.linear import ReplicatedLinear
-from vllm_factory.pooling.protocol import PassthroughPooler
-from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 from vllm.model_executor.models.qwen3_vl import (
     Qwen3VLDummyInputsBuilder,
@@ -28,6 +26,9 @@ from vllm.model_executor.models.qwen3_vl import (
 )
 from vllm.model_executor.models.utils import AutoWeightsLoader, WeightsMapper
 from vllm.multimodal import MULTIMODAL_REGISTRY
+
+from vllm_factory.pooling.protocol import PassthroughPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 # ---------------------------------------------------------------------------
 # Per-model ProcessingInfo: forces the slow Qwen2VLImageProcessor.

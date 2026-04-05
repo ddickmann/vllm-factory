@@ -1,16 +1,21 @@
 """Ad-hoc experiment: entity-specific vs generic labels (GLiNER linker).
 
 Ad-hoc script — not a supported test harness. See docs/gliner/README.md."""
-import os, re, torch, json, sys
+import json
+import os
+import re
+import sys
+
+import torch
+
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+from huggingface_hub import hf_hub_download
 from transformers import AutoTokenizer, DebertaConfig, DebertaModel
 from vllm import LLM
 from vllm.inputs import TokensPrompt
 from vllm.pooling_params import PoolingParams
-from huggingface_hub import hf_hub_download
 
-import plugins.deberta_gliner_linker
 from plugins.deberta_gliner_linker import get_model_path
 
 text = "Apple announced new products in California. Michael Jordan joined the team."

@@ -21,4 +21,5 @@ def register(
 ) -> None:
     """Register a model + config with HuggingFace AutoConfig and vLLM ModelRegistry."""
     from forge.registration import register_plugin
+
     register_plugin(model_type, config_cls, architecture_name, model_cls, aliases=aliases)

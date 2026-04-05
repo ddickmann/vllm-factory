@@ -28,7 +28,8 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
-from vllm_factory.io.base import FactoryIOProcessor, TokensPrompt, PromptType, PoolingRequestOutput
+
+from vllm_factory.io.base import FactoryIOProcessor, PoolingRequestOutput, PromptType, TokensPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -209,8 +210,12 @@ class GLiNERRerankIOProcessor(FactoryIOProcessor):
         for span in spans[0]:
             ws = span.start
             we = span.end
-            char_start = request_meta["word_starts"][ws] if ws < len(request_meta["word_starts"]) else 0
-            char_end = request_meta["word_ends"][we] if we < len(request_meta["word_ends"]) else len(src)
+            char_start = (
+                request_meta["word_starts"][ws] if ws < len(request_meta["word_starts"]) else 0
+            )
+            char_end = (
+                request_meta["word_ends"][we] if we < len(request_meta["word_ends"]) else len(src)
+            )
             entities.append(
                 {
                     "start": char_start,

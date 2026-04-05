@@ -12,6 +12,7 @@ def resolve_io_processor(qualname: str) -> type | None:
     """Attempt to resolve *qualname* to an IOProcessor class."""
     try:
         from vllm.utils import resolve_obj_by_qualname
+
         return resolve_obj_by_qualname(qualname)
     except Exception:
         pass
@@ -22,6 +23,7 @@ def resolve_io_processor(qualname: str) -> type | None:
     module_path, cls_name = parts
     try:
         import importlib
+
         mod = importlib.import_module(module_path)
         return getattr(mod, cls_name, None)
     except Exception:

@@ -70,8 +70,8 @@ class HFAutoModelRunner:
     def _load(self):
         if self._model is not None:
             return
-        import torch
         import safetensors.torch
+        import torch
         from huggingface_hub import hf_hub_download
         from transformers import AutoModel, AutoTokenizer
 

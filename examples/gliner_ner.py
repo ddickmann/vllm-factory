@@ -20,8 +20,8 @@ Then run:
     python examples/gliner_ner.py
 """
 
+
 import requests
-import json
 
 BASE_URL = "http://localhost:8000"
 MODEL = "/tmp/sauerkraut-gliner-vllm"

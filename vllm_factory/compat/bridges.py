@@ -23,7 +23,11 @@ class PoolingBridge(Protocol):
     def build_transport_request(self, req: FactoryRequest) -> object: ...
 
     def parse_transport_response(
-        self, resp: object, *, plugin: str, request_id: str | None = None,
+        self,
+        resp: object,
+        *,
+        plugin: str,
+        request_id: str | None = None,
     ) -> FactoryResponse: ...
 
 
@@ -38,18 +42,21 @@ class NativeIOProcessorBridge:
             from vllm.entrypoints.pooling.pooling.protocol import (
                 IOProcessorRequest,
             )
+
             return IOProcessorRequest(
                 model=req.model,
                 data=req.data,
                 task="plugin",
             )
         except ImportError:
-            raise RuntimeError(
-                "IOProcessorRequest not available in this vLLM install"
-            )
+            raise RuntimeError("IOProcessorRequest not available in this vLLM install")
 
     def parse_transport_response(
-        self, resp: object, *, plugin: str, request_id: str | None = None,
+        self,
+        resp: object,
+        *,
+        plugin: str,
+        request_id: str | None = None,
     ) -> FactoryResponse:
         data = getattr(resp, "data", resp)
         return FactoryResponse(
@@ -66,6 +73,7 @@ def select_bridge(caps: Any | None = None) -> PoolingBridge:
     """
     if caps is None:
         from vllm_factory.compat.vllm_capabilities import detect
+
         caps = detect()
 
     if caps.has_io_processor_interface and caps.has_io_processor_response:

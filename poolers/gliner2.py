@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import torch
 import torch.nn as nn
 
 from vllm_factory.pooling.protocol import PoolerContext, split_hidden_states
-
 
 # ==================================================================
 # Utility: MLP builder (mirrors gliner2.layers.create_mlp)

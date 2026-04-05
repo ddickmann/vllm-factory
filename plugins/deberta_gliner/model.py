@@ -194,9 +194,7 @@ class GLiNERDebertaV2Model(nn.Module):
 
         # Load backbone via custom encoder's load_weights (handles key remapping)
         self.model.load_weights(backbone_weights)
-        logger.info(
-            "[GLiNERDebertaV2] Loaded backbone: %s weight tensors", len(backbone_weights)
-        )
+        logger.info("[GLiNERDebertaV2] Loaded backbone: %s weight tensors", len(backbone_weights))
 
         # Load projection
         if self.projection is not None and projection_state:

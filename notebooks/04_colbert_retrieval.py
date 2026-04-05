@@ -8,9 +8,10 @@
 # Both produce per-token embeddings for fine-grained matching.
 
 # %%
-import sys
 import os
+import sys
 import time
+
 import numpy as np
 import torch
 

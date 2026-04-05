@@ -25,13 +25,14 @@ import torch
 import torch.nn as nn
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.linear import ReplicatedLinear
-from vllm_factory.pooling.protocol import PassthroughPooler
-from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 from vllm.model_executor.models.interfaces_base import default_pooling_type
 
 # Import the native vLLM LFM2-VL
 from vllm.model_executor.models.lfm2_vl import Lfm2VLForConditionalGeneration
 from vllm.model_executor.models.utils import AutoWeightsLoader, WeightsMapper
+
+from vllm_factory.pooling.protocol import PassthroughPooler
+from vllm_factory.pooling.vllm_adapter import VllmPoolerAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -214,9 +215,7 @@ class LFM2VLForColPali(Lfm2VLForConditionalGeneration):
                         proj_weight.shape,
                     )
                 else:
-                    logger.warning(
-                        "[LFM2VLForColPali] Projection weights may be zero!"
-                    )
+                    logger.warning("[LFM2VLForColPali] Projection weights may be zero!")
             except Exception as e:
                 logger.warning(
                     "[LFM2VLForColPali] Could not verify projection weights: %s",

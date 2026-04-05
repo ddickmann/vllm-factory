@@ -43,16 +43,12 @@ def test_multi_text_tokenize_variable_length_and_masks_aligned():
     proc.warmup(TEST_LABELS)
 
     per_text = [proc._tokenize(t) for t in MULTI_TEXTS]
-    seq_lens = [len(x["input_ids"]) for x in per_text]
+    seq_lens = [len(x["prompt_token_ids"]) for x in per_text]
     assert len(set(seq_lens)) > 1, "fixture should include different token lengths"
 
     for i, x in enumerate(per_text):
-        L = len(x["input_ids"])
-        assert len(x["attention_mask"]) == L, f"row {i} attention_mask vs input_ids"
-        assert len(x["words_mask"]) == L, f"row {i} words_mask vs input_ids"
-        assert int(x["attention_mask"].sum()) == L, (
-            f"row {i}: expect dense mask (no pad tokens in processor path)"
-        )
+        L = len(x["prompt_token_ids"])
+        assert len(x["words_mask"]) == L, f"row {i} words_mask vs prompt_token_ids"
         assert x["text_lengths"] == len(x["words"])
 
 
@@ -87,8 +83,8 @@ def test_batch_tokenize_matches_collator_rows_like_preprocess_parity():
 
     for i, text in enumerate(MULTI_TEXTS):
         pr = proc._tokenize(text)
+        pr_ids = torch.tensor(pr["prompt_token_ids"])
         am_row = batch["attention_mask"][i]
         L = int(am_row.sum().item())
-        assert torch.equal(batch["input_ids"][i, :L], pr["input_ids"])
-        assert torch.equal(am_row[:L], pr["attention_mask"])
+        assert torch.equal(batch["input_ids"][i, :L], pr_ids)
         assert torch.equal(batch["words_mask"][i, :L], pr["words_mask"])

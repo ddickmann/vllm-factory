@@ -84,6 +84,7 @@ def main() -> None:
 
     if args.doctor:
         from vllm_factory.compat.doctor import run_doctor
+
         run_doctor()
         return
 

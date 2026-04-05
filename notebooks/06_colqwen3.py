@@ -7,9 +7,10 @@
 # **2,486 req/s** server throughput at concurrency 32.
 
 # %%
-import sys
 import os
+import sys
 import time
+
 import numpy as np
 import torch
 

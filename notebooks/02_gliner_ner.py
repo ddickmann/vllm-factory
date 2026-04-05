@@ -10,13 +10,12 @@
 # This notebook demonstrates the full pipeline: model prep → inference → entity decode.
 
 # %%
-import sys
 import os
 import re
+import sys
 import time
-import json
+
 import torch
-import numpy as np
 
 ROOT = os.path.abspath(os.path.join(os.getcwd(), ".."))
 sys.path.insert(0, ROOT)
@@ -42,9 +41,9 @@ print(f"Model ready at: {model_dir}")
 # ## Step 2: Load via vLLM
 
 # %%
+from transformers import AutoTokenizer
 from vllm import LLM, PoolingParams
 from vllm.inputs import TokensPrompt
-from transformers import AutoTokenizer
 
 llm = LLM(
     model=model_dir,

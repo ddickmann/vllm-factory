@@ -14,8 +14,9 @@ Then run:
     python examples/embedding_search.py
 """
 
-import requests
 import math
+
+import requests
 
 BASE_URL = "http://localhost:8000"
 MODEL = "unsloth/embeddinggemma-300m"

@@ -98,9 +98,7 @@ def _make_patched_preprocess(orig_preprocess):
         try:
             am = _build_flat_attention_mask(self, scheduler_output, int(input_ids.shape[0]))
         except (ValueError, IndexError) as exc:
-            logger.debug(
-                "attention_mask patch skipped for this batch: %s", exc
-            )
+            logger.debug("attention_mask patch skipped for this batch: %s", exc)
             am = None
         except Exception:
             logger.exception("GLiNER-Linker: failed to build attention_mask for pooling batch")

@@ -7,10 +7,11 @@
 # **3.5× throughput** vs vanilla GLiNER2 at batch 8. F1 = 1.0000 parity.
 
 # %%
-import sys
 import os
 import subprocess
+import sys
 import time
+
 import torch
 
 ROOT = os.path.abspath(os.path.join(os.getcwd(), ".."))
@@ -45,9 +46,9 @@ else:
 # ## Step 2: Load via vLLM
 
 # %%
+from transformers import AutoTokenizer
 from vllm import LLM, PoolingParams
 from vllm.inputs import TokensPrompt
-from transformers import AutoTokenizer
 
 llm = LLM(
     model=MODEL_DIR,
@@ -66,8 +67,8 @@ print("✅ GLiNER2 loaded via vLLM (DeBERTa-v3-large)")
 
 # %%
 from deberta_gliner2.processor import (
-    prepare_gliner2_input,
     decode_entities_from_scores,
+    prepare_gliner2_input,
 )
 
 text = (

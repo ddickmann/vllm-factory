@@ -103,8 +103,9 @@ def test_preprocessing_parity(tokenizer_name: str):
     Uses a public BERT tokenizer with special tokens added to match GLiNER convention.
     """
     from transformers import AutoTokenizer
+
     from forge.gliner_preprocessor import GLiNERPreprocessor
-    from plugins.mmbert_gliner.io_processor import MMBertGLiNERIOProcessor, GLiNERInput
+    from plugins.mmbert_gliner.io_processor import GLiNERInput, MMBertGLiNERIOProcessor
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
     tokenizer.add_special_tokens({"additional_special_tokens": ["<<ENT>>", "<<SEP>>"]})
@@ -183,10 +184,11 @@ def test_preprocessing_parity(tokenizer_name: str):
 def test_postprocessing_parity(tokenizer_name: str):
     """Compare post-processing from Forge BaseProcessor vs IOProcessor."""
     from transformers import AutoTokenizer
-    from forge.gliner_preprocessor import GLiNERPreprocessor
+    from vllm.outputs import PoolingOutput, PoolingRequestOutput
+
     from forge.gliner_postprocessor import GLiNERDecoder, get_final_entities
-    from plugins.mmbert_gliner.io_processor import MMBertGLiNERIOProcessor, GLiNERInput
-    from vllm.outputs import PoolingRequestOutput, PoolingOutput
+    from forge.gliner_preprocessor import GLiNERPreprocessor
+    from plugins.mmbert_gliner.io_processor import GLiNERInput, MMBertGLiNERIOProcessor
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
     tokenizer.add_special_tokens({"additional_special_tokens": ["<<ENT>>", "<<SEP>>"]})
@@ -300,8 +302,9 @@ def test_postprocessing_parity(tokenizer_name: str):
 
 def test_response_contract(tokenizer_name: str):
     """Verify output_to_response returns a valid IOProcessorResponse."""
-    from plugins.mmbert_gliner.io_processor import MMBertGLiNERIOProcessor
     from vllm.entrypoints.pooling.pooling.protocol import IOProcessorResponse
+
+    from plugins.mmbert_gliner.io_processor import MMBertGLiNERIOProcessor
 
     sample_entities = [
         {"start": 4, "end": 7, "text": "CEO", "label": "person", "score": 0.88},
@@ -329,9 +332,11 @@ def test_response_contract(tokenizer_name: str):
 
 def test_params_contract():
     """Verify validate_or_generate_params correctly stashes/pops extra_kwargs."""
-    from plugins.mmbert_gliner.io_processor import MMBertGLiNERIOProcessor
-    from vllm.pooling_params import PoolingParams
     import threading
+
+    from vllm.pooling_params import PoolingParams
+
+    from plugins.mmbert_gliner.io_processor import MMBertGLiNERIOProcessor
 
     io_proc = MMBertGLiNERIOProcessor.__new__(MMBertGLiNERIOProcessor)
     io_proc._lock = threading.Lock()
@@ -368,8 +373,9 @@ def test_params_contract():
 
 def test_parse_request():
     """Verify parse_request handles various input formats."""
-    from plugins.mmbert_gliner.io_processor import MMBertGLiNERIOProcessor, GLiNERInput
     import threading
+
+    from plugins.mmbert_gliner.io_processor import GLiNERInput, MMBertGLiNERIOProcessor
 
     io_proc = MMBertGLiNERIOProcessor.__new__(MMBertGLiNERIOProcessor)
     io_proc._lock = threading.Lock()
@@ -473,7 +479,7 @@ def main():
 
     # Summary
     print(f"\n{'='*60}")
-    print(f"  SUMMARY")
+    print("  SUMMARY")
     print(f"{'='*60}")
     for name, passed in results.items():
         status = "PASS" if passed else "FAIL"

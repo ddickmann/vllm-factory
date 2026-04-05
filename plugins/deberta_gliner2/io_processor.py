@@ -27,7 +27,6 @@ from typing import Any, Dict
 
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
-from vllm_factory.io.base import FactoryIOProcessor, TokensPrompt, PromptType, PoolingRequestOutput
 
 from plugins.deberta_gliner2.processor import (
     build_schema_for_classification,
@@ -38,6 +37,7 @@ from plugins.deberta_gliner2.processor import (
     format_results,
     preprocess,
 )
+from vllm_factory.io.base import FactoryIOProcessor, PoolingRequestOutput, PromptType, TokensPrompt
 
 _SCHEMA_BUILDERS = {
     "entities": build_schema_for_entities,

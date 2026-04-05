@@ -8,7 +8,6 @@ Runs vanilla GLiNER reference for each model too.
 import gc
 import os
 import re
-import subprocess
 import sys
 import time
 
@@ -118,9 +117,9 @@ def bench_vllm_gliner(plugin_name, model_dir, text, labels, n_warmup=N_WARMUP, n
     except:
         pass
 
+    from transformers import AutoTokenizer
     from vllm import LLM, PoolingParams
     from vllm.inputs import TokensPrompt
-    from transformers import AutoTokenizer
 
     print(f"  Loading vLLM({model_dir})...")
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
@@ -205,10 +204,10 @@ def bench_vllm_gliner(plugin_name, model_dir, text, labels, n_warmup=N_WARMUP, n
 
 def bench_linker_vllm(text, labels, n_warmup=N_WARMUP, n_runs=N_RUNS):
     """Benchmark vLLM linker plugin."""
-    from vllm import LLM
-    from vllm.pooling_params import PoolingParams
-    from vllm.inputs import TokensPrompt
     from transformers import AutoTokenizer
+    from vllm import LLM
+    from vllm.inputs import TokensPrompt
+    from vllm.pooling_params import PoolingParams
 
     model_dir = "plugins/deberta_gliner_linker/_model_cache"
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
@@ -286,12 +285,12 @@ def run_single_model(plugin_name):
     print(f"{'='*70}")
 
     # Vanilla
-    print(f"\n  [Vanilla GLiNER]")
+    print("\n  [Vanilla GLiNER]")
     vanilla = bench_vanilla_gliner(cfg["hf_model"], TEXT_512, LABELS)
     del_cuda()
 
     # vLLM
-    print(f"\n  [vLLM Factory]")
+    print("\n  [vLLM Factory]")
     vllm_r = bench_vllm_gliner(plugin_name, cfg["vllm_dir"], TEXT_512, LABELS)
 
     return vanilla, vllm_r
@@ -330,16 +329,16 @@ if __name__ == "__main__":
 
     if target in ("all", "deberta_gliner_linker"):
         print(f"\n{'='*70}")
-        print(f"  DEBERTA_GLINER_LINKER")
+        print("  DEBERTA_GLINER_LINKER")
         print(f"{'='*70}")
-        print(f"\n  [vLLM Factory]")
+        print("\n  [vLLM Factory]")
         l = bench_linker_vllm(TEXT_512, LABELS)
         all_results["deberta_gliner_linker"] = {"vanilla": None, "vllm": l}
         del_cuda()
 
     # Summary
     print(f"\n\n{'='*90}")
-    print(f"  SUMMARY — GLiNER Benchmarks (512 tokens, RTX 2000 Ada)")
+    print("  SUMMARY — GLiNER Benchmarks (512 tokens, RTX 2000 Ada)")
     print(f"{'='*90}\n")
     print(f"  {'Plugin':<25} {'Batch':<7} {'Vanilla req/s':<16} {'vLLM req/s':<14} {'Speedup':<10} {'VRAM'}")
     print(f"  {'-'*85}")

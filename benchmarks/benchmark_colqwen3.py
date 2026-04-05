@@ -5,8 +5,8 @@ Benchmark: ColQwen3 — vLLM in-process (text-only, no vanilla reference)
 Measures req/s for multimodal ColPali/ColQwen retrieval at ~512 tokens with batch=1,8,32.
 """
 import gc
-import os
 import time
+
 import torch
 
 TEXT_512 = (
@@ -41,9 +41,8 @@ N_RUNS = 20
 
 
 def bench_vllm():
-    import plugins.colqwen3  # noqa: register plugin
-    from vllm import LLM
     from transformers import AutoTokenizer
+    from vllm import LLM
 
     print("  Loading vLLM...")
     llm = LLM(
@@ -92,7 +91,7 @@ if __name__ == "__main__":
 
     r = bench_vllm()
     print(f"\n{'=' * 70}")
-    print(f"  RESULTS — ColQwen3 (vLLM only, no vanilla reference)")
+    print("  RESULTS — ColQwen3 (vLLM only, no vanilla reference)")
     print(f"{'=' * 70}")
     for bs in [1, 8, 32]:
         print(f"  batch={bs:<3} req/s: {r[f'batch{bs}_rps']}")

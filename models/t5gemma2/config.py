@@ -14,8 +14,14 @@ except ImportError:
 try:
     from transformers import (
         T5Gemma2Config as HFT5Gemma2Config,
+    )
+    from transformers import (
         T5Gemma2DecoderConfig as HFT5Gemma2DecoderConfig,
+    )
+    from transformers import (
         T5Gemma2EncoderConfig as HFT5Gemma2EncoderConfig,
+    )
+    from transformers import (
         T5Gemma2TextConfig as HFT5Gemma2TextConfig,
     )
     HAS_NATIVE_T5GEMMA2_CONFIG = True

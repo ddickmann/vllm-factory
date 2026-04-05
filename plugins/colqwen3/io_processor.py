@@ -25,6 +25,7 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
+
 from vllm_factory.io.base import (
     FactoryIOProcessor,
     PoolingRequestOutput,
@@ -164,9 +165,9 @@ class ColQwen3IOProcessor(FactoryIOProcessor):
         if not isinstance(raw, torch.Tensor):
             raw = torch.as_tensor(raw)
 
-        return base64.b64encode(
-            raw.cpu().contiguous().to(torch.float32).numpy().tobytes()
-        ).decode("ascii")
+        return base64.b64encode(raw.cpu().contiguous().to(torch.float32).numpy().tobytes()).decode(
+            "ascii"
+        )
 
 
 def get_processor_cls() -> str:

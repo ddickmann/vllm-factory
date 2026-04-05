@@ -11,14 +11,13 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+from typing import List
 
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from vllm_factory.pooling.protocol import PoolerContext, split_hidden_states
-
 
 # ---------- Utility components ----------
 

@@ -168,9 +168,7 @@ class GLiNER2VLLMModel(nn.Module):
 
         # Load backbone via custom encoder's load_weights
         self.encoder.load_weights(backbone_weights)
-        logger.info(
-            "[GLiNER2] Loaded encoder: %s weight tensors", len(backbone_weights)
-        )
+        logger.info("[GLiNER2] Loaded encoder: %s weight tensors", len(backbone_weights))
 
         # Load pooler (use business pooler directly to avoid _inner. prefix mismatch)
         if pooler_loaded:
