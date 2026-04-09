@@ -449,7 +449,22 @@ def decode_output(raw_output, schema: Dict, task_types: List[str] = None) -> Dic
 
     length = int(data[0])
     byte_data = bytes([int(b) for b in data[1 : length + 1]])
-    return json.loads(byte_data.decode("utf-8"))
+    results = json.loads(byte_data.decode("utf-8"))
+
+    classifications = schema.get("classifications", []) if isinstance(schema, dict) else []
+    classification_config = {
+        item.get("task"): item
+        for item in classifications
+        if isinstance(item, dict) and item.get("task")
+    }
+    for key, value in results.items():
+        if not isinstance(value, dict) or value.get("type") != "classification":
+            continue
+        config = classification_config.get(key, {})
+        if config:
+            value["multi_label"] = bool(config.get("multi_label", False))
+
+    return results
 
 
 def _format_entity_record(item: dict[str, Any], include_confidence: bool, include_spans: bool) -> Any:
@@ -505,12 +520,28 @@ def format_results(results: Dict, include_confidence: bool = False, include_span
 
             logits = value.get("logits", [])
             labels = value.get("labels", [])
-            probs = torch.softmax(torch.tensor(logits), dim=-1)
-            best = int(probs.argmax().item())
-            if include_confidence:
-                formatted[key] = {"label": labels[best], "confidence": probs[best].item()}
+            multi_label = bool(value.get("multi_label", False))
+            if multi_label:
+                probs = torch.sigmoid(torch.tensor(logits))
+                selected = [
+                    (label, probs[idx].item())
+                    for idx, label in enumerate(labels)
+                    if probs[idx].item() >= 0.5
+                ]
+                if include_confidence:
+                    formatted[key] = [
+                        {"label": label, "confidence": score}
+                        for label, score in selected
+                    ]
+                else:
+                    formatted[key] = [label for label, _ in selected]
             else:
-                formatted[key] = labels[best]
+                probs = torch.softmax(torch.tensor(logits), dim=-1)
+                best = int(probs.argmax().item())
+                if include_confidence:
+                    formatted[key] = {"label": labels[best], "confidence": probs[best].item()}
+                else:
+                    formatted[key] = labels[best]
 
         elif result_type == "entities":
             entity_results = {}
