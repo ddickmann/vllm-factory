@@ -32,7 +32,7 @@ debug_*.py
 bench/results/
 bench/results_*/
 bench/charts/archive/
-
+gliner2-server
 # Internal benchmark results and old benchmark scripts
 benchmarks/
 
@@ -44,3 +44,4 @@ docs/io_processor_*.md
 # Internal scripts (reference generation, parity orchestrators, GLiNER helpers)
 scripts/
 tests/
+uv.lock

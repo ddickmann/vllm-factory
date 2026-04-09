@@ -6,9 +6,9 @@ Two-phase design:
     Phase 2 (--test):    vLLM inference + parity comparison
 
 Usage:
-    python plugins/gliner2/parity_test.py --prepare
-    python plugins/gliner2/parity_test.py --test
-    python plugins/gliner2/parity_test.py           # both in sequence
+    python plugins/deberta_gliner2/parity_test.py --prepare
+    python plugins/deberta_gliner2/parity_test.py --test
+    python plugins/deberta_gliner2/parity_test.py           # both in sequence
 """
 
 import argparse
@@ -174,12 +174,9 @@ def phase_test():
     from vllm.inputs import TokensPrompt
 
     from plugins.deberta_gliner2.processor import (
-        build_schema_for_classification,
-        build_schema_for_entities,
-        build_schema_for_json,
-        build_schema_for_relations,
         decode_output,
         format_results,
+        normalize_gliner2_schema,
         preprocess,
     )
 
@@ -195,7 +192,17 @@ def phase_test():
 
     # ---- TEST 1: Entity Extraction ----
     print("\n--- TEST 1: Entity Extraction ---")
-    schema = build_schema_for_entities(ENTITY_LABELS)
+    schema = normalize_gliner2_schema(
+        {
+            "entities": {
+                "person": "",
+                "organization": "",
+                "location": "",
+                "email": "",
+                "phone_number": "",
+            }
+        }
+    )
     prep = preprocess(tokenizer, TEXT, schema)
     prompt_ids = prep["input_ids"]
     prep = {k: v for k, v in prep.items() if k != "input_ids"}
@@ -277,9 +284,14 @@ def phase_test():
 
     # ---- TEST 2: Classification ----
     print("\n--- TEST 2: Classification ---")
-    cls_schema = build_schema_for_classification(
+    cls_schema = normalize_gliner2_schema(
         {
-            "topic": {"labels": ["technology", "finance", "sports", "healthcare"]},
+            "classifications": [
+                {
+                    "task": "topic",
+                    "labels": ["technology", "finance", "sports", "healthcare"],
+                }
+            ]
         }
     )
     cls_prep = preprocess(tokenizer, TEXT, cls_schema)
@@ -311,7 +323,14 @@ def phase_test():
 
     # ---- TEST 3: Relations ----
     print("\n--- TEST 3: Relation Extraction ---")
-    rel_schema = build_schema_for_relations(["works_at", "reports_to"])
+    rel_schema = normalize_gliner2_schema(
+        {
+            "relations": {
+                "works_at": "Employment relationship",
+                "reports_to": "Reporting relationship",
+            }
+        }
+    )
     rel_prep = preprocess(tokenizer, TEXT, rel_schema)
     rel_prompt = TokensPrompt(prompt_token_ids=rel_prep["input_ids"])
     rel_prep = {k: v for k, v in rel_prep.items() if k != "input_ids"}
@@ -327,9 +346,19 @@ def phase_test():
 
     # ---- TEST 4: JSON Structure ----
     print("\n--- TEST 4: JSON Structure ---")
-    json_schema = build_schema_for_json(
+    json_schema = normalize_gliner2_schema(
         {
-            "employee": ["name", "title", "company", "location", "email"],
+            "structures": {
+                "employee": {
+                    "fields": [
+                        {"name": "name", "dtype": "str"},
+                        {"name": "title", "dtype": "str"},
+                        {"name": "company", "dtype": "str"},
+                        {"name": "location", "dtype": "str"},
+                        {"name": "email", "dtype": "str"},
+                    ]
+                }
+            }
         }
     )
     json_prep = preprocess(tokenizer, TEXT, json_schema)
@@ -344,6 +373,52 @@ def phase_test():
     json_result = decode_output(json_out[0].outputs.data, json_schema)
     json_formatted = format_results(json_result, include_confidence=True)
     print(f"vLLM: {json.dumps(json_formatted, indent=2, default=str)}")
+
+    # ---- TEST 5: Mixed Canonical Schema ----
+    print("\n--- TEST 5: Mixed Canonical Schema ---")
+    mixed_schema = normalize_gliner2_schema(
+        {
+            "entities": {
+                "person": "Person names",
+                "organization": "Organization names",
+            },
+            "classifications": [
+                {
+                    "task": "topic",
+                    "labels": ["technology", "finance", "sports", "healthcare"],
+                }
+            ],
+            "relations": {
+                "works_at": "Employment relationship",
+            },
+            "structures": {
+                "employee": {
+                    "fields": [
+                        {"name": "name", "dtype": "str"},
+                        {"name": "company", "dtype": "str"},
+                    ]
+                }
+            },
+        }
+    )
+    mixed_prep = preprocess(tokenizer, TEXT, mixed_schema)
+    mixed_prompt = TokensPrompt(prompt_token_ids=mixed_prep["input_ids"])
+    mixed_pp = PoolingParams(
+        task="plugin",
+        extra_kwargs={k: v for k, v in mixed_prep.items() if k != "input_ids"},
+    )
+    mixed_out = vllm_model.encode(
+        [mixed_prompt],
+        pooling_params=mixed_pp,
+        pooling_task="plugin",
+    )
+    mixed_result = decode_output(mixed_out[0].outputs.data, mixed_schema)
+    mixed_formatted = format_results(
+        mixed_result,
+        include_confidence=True,
+        include_spans=True,
+    )
+    print(f"vLLM: {json.dumps(mixed_formatted, indent=2, default=str)}")
 
     # Final summary
     print("\n" + "=" * 60)
