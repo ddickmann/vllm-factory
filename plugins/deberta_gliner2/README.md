@@ -146,8 +146,11 @@ Requires a prepared model directory.
 
 ```bash
 vllm serve /tmp/gliner2-vllm \
+  --runner pooling \
+  --io-processor-plugin deberta_gliner2_io \
   --trust-remote-code --dtype bfloat16 \
-  --no-enable-prefix-caching --no-enable-chunked-prefill --port 8200
+  --no-enable-prefix-caching --no-enable-chunked-prefill \
+  --port 8200
 ```
 
 ## Verify
