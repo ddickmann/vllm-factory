@@ -13,8 +13,17 @@ Schema-driven entity extraction, classification, relations via GLiNER2.
 from vllm import LLM
 
 llm = LLM("fastino/gliner2-large-v1", trust_remote_code=True)
-# GLiNER2 supports entity extraction, classification, relations, and JSON schema output
+# GLiNER2 supports simple labels, schema requests, and mixed schema output
 ```
+
+## Request Contract
+
+- `labels` stays supported for the simple entity-extraction path.
+- `schema` supports mixed-task requests.
+- If both are present, `schema` wins.
+- One request can mix `entities`, `classifications`, `relations`, and `structures`.
+- `threshold`, `include_confidence`, and `include_spans` are request-level flags.
+- `labels` is the simplest path for benchmarks and parity tests.
 
 ## Serve
 
@@ -31,3 +40,4 @@ vllm serve /tmp/gliner2-vllm \
 ```bash
 python plugins/deberta_gliner2/parity_test.py
 ```
+
