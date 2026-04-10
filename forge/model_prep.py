@@ -17,7 +17,6 @@ import shutil
 
 from huggingface_hub import hf_hub_download, list_repo_files
 
-
 logger = logging.getLogger(__name__)
 
 # Plugin → (model_type, architecture, config transform)
@@ -121,7 +120,9 @@ def prepare_model_for_vllm_if_needed(
     except Exception:
         return model_ref
 
-    config_json_path = _download_file(model_ref, "config.json") if "config.json" in repo_files else None
+    config_json_path = (
+        _download_file(model_ref, "config.json") if "config.json" in repo_files else None
+    )
     hf_config = _read_json(config_json_path) if config_json_path else {}
 
     if (

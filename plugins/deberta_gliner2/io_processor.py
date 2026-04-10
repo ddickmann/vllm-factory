@@ -31,7 +31,12 @@ from typing import Any, Dict
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
 
-from plugins.deberta_gliner2.processor import decode_output, format_results, normalize_gliner2_schema, preprocess
+from plugins.deberta_gliner2.processor import (
+    decode_output,
+    format_results,
+    normalize_gliner2_schema,
+    preprocess,
+)
 from vllm_factory.io.base import FactoryIOProcessor, PoolingRequestOutput, PromptType, TokensPrompt
 
 

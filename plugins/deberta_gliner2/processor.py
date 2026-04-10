@@ -72,6 +72,7 @@ def _empty_schema() -> dict[str, Any]:
         },
     }
 
+
 # ==================================================================
 # Schema Processing (inference-only, no training augmentation)
 # ==================================================================
@@ -111,14 +112,15 @@ def normalize_classifications_schema(classifications: Any) -> list[dict[str, Any
             if not isinstance(config["label_descriptions"], dict):
                 raise ValueError("'label_descriptions' must be a dict when provided")
             config["label_descriptions"] = {
-                str(label): str(desc or "")
-                for label, desc in config["label_descriptions"].items()
+                str(label): str(desc or "") for label, desc in config["label_descriptions"].items()
             }
         normalized.append(config)
     return normalized
 
 
-def normalize_relations_schema(relations: Any) -> tuple[list[dict[str, dict[str, str]]], dict[str, str]]:
+def normalize_relations_schema(
+    relations: Any,
+) -> tuple[list[dict[str, dict[str, str]]], dict[str, str]]:
     if relations is None:
         return [], {}
     if isinstance(relations, list):
@@ -232,9 +234,11 @@ def build_schema_for_classification(tasks: Dict) -> Dict:
         classifications.append(config)
     return normalize_gliner2_schema({"classifications": classifications})
 
+
 # ==================================================================
 # Schema → Token Sequence
 # ==================================================================
+
 
 def _render_structure_field(field: dict[str, Any]) -> str:
     parts = [field["name"]]
@@ -285,8 +289,21 @@ def infer_schemas_from_dict(schema: Dict) -> Dict:
 
     for item in schema.get("json_structures", []):
         for parent, fields in item.items():
-            field_defs = structure_meta.get(parent) or [{"name": name} for name in fields]
-            schemas.append(_transform_json_structure(parent, field_defs))
+            field_names = list(fields.keys())
+            field_defs = structure_meta.get(parent, [])
+            field_descs = (
+                {fd["name"]: fd.get("description", "") for fd in field_defs} if field_defs else {}
+            )
+            mode = "descriptions" if any(field_descs.values()) else "none"
+            schemas.append(
+                _transform_schema(
+                    parent,
+                    field_names,
+                    C_TOKEN,
+                    label_descriptions=field_descs,
+                    example_mode=mode,
+                )
+            )
             count = sum(1 for value in fields.values() if value != "")
             labels.append([max(1, count), []])
             types.append("json_structures")
@@ -341,6 +358,7 @@ def infer_schemas_from_dict(schema: Dict) -> Dict:
 # Input Formatting
 # ==================================================================
 
+
 def format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens):
     """Format schema + text into token IDs with segment mappings."""
     combined = []
@@ -387,6 +405,7 @@ def format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens):
 # ==================================================================
 # Main Preprocessing
 # ==================================================================
+
 
 def preprocess(tokenizer, text: str, schema: Dict, token_pooling: str = "first"):
     """Preprocess text + schema for vLLM inference.
@@ -435,6 +454,7 @@ def preprocess(tokenizer, text: str, schema: Dict, token_pooling: str = "first")
 # Postprocessing
 # ==================================================================
 
+
 def decode_output(raw_output, schema: Dict, task_types: List[str] = None) -> Dict:
     """Decode raw vLLM output tensor back into structured results.
 
@@ -467,7 +487,9 @@ def decode_output(raw_output, schema: Dict, task_types: List[str] = None) -> Dic
     return results
 
 
-def _format_entity_record(item: dict[str, Any], include_confidence: bool, include_spans: bool) -> Any:
+def _format_entity_record(
+    item: dict[str, Any], include_confidence: bool, include_spans: bool
+) -> Any:
     if not isinstance(item, dict):
         return item
 
@@ -497,13 +519,18 @@ def _strip_nested_metadata(value: Any, include_confidence: bool, include_spans: 
                 if "end" in value:
                     record["end"] = value["end"]
             return record if (include_confidence or include_spans) else value["text"]
-        return {key: _strip_nested_metadata(item, include_confidence, include_spans) for key, item in value.items()}
+        return {
+            key: _strip_nested_metadata(item, include_confidence, include_spans)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [_strip_nested_metadata(item, include_confidence, include_spans) for item in value]
     return value
 
 
-def format_results(results: Dict, include_confidence: bool = False, include_spans: bool = False) -> Dict:
+def format_results(
+    results: Dict, include_confidence: bool = False, include_spans: bool = False
+) -> Dict:
     """Format raw results into user-friendly output."""
     formatted = {}
     relations = {}
@@ -530,8 +557,7 @@ def format_results(results: Dict, include_confidence: bool = False, include_span
                 ]
                 if include_confidence:
                     formatted[key] = [
-                        {"label": label, "confidence": score}
-                        for label, score in selected
+                        {"label": label, "confidence": score} for label, score in selected
                     ]
                 else:
                     formatted[key] = [label for label, _ in selected]
@@ -559,7 +585,9 @@ def format_results(results: Dict, include_confidence: bool = False, include_span
             for inst in value.get("instances", []):
                 relation_items.append(
                     {
-                        field: _strip_nested_metadata(field_value, include_confidence, include_spans)
+                        field: _strip_nested_metadata(
+                            field_value, include_confidence, include_spans
+                        )
                         for field, field_value in inst.items()
                         if field_value is not None
                     }

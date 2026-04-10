@@ -41,8 +41,3 @@ vllm serve /tmp/gliner2-vllm \
 python plugins/deberta_gliner2/parity_test.py
 ```
 
-For the parser/runtime contract tests:
-
-```bash
-python -m pytest tests/test_gliner2_io_processor_contract.py tests/test_gliner2_schema_contract.py tests/test_gliner2_runtime_contract.py
-```
