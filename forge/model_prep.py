@@ -11,10 +11,14 @@ Usage:
 """
 
 import json
+import logging
 import os
 import shutil
 
 from huggingface_hub import hf_hub_download, list_repo_files
+
+
+logger = logging.getLogger(__name__)
 
 # Plugin → (model_type, architecture, config transform)
 PLUGIN_REGISTRY = {
@@ -181,11 +185,11 @@ def prepare_gliner2_model(
     if os.path.exists(config_path) and not force:
         cached = _read_json(config_path)
         if cached.get("model_type") == "gliner2":
-            print(f"✅ Model already prepared at {output_dir}")
+            logger.info("Model already prepared at %s", output_dir)
             return output_dir
         shutil.rmtree(output_dir, ignore_errors=True)
 
-    print(f"📦 Preparing {hf_model_id} for vLLM (deberta_gliner2)...")
+    logger.info("Preparing %s for vLLM (deberta_gliner2)...", hf_model_id)
 
     repo_files = list_repo_files(hf_model_id)
     extractor_cfg = _read_json(_download_file(hf_model_id, "config.json"))
@@ -238,12 +242,12 @@ def prepare_gliner2_model(
             if not os.path.exists(dst):
                 os.symlink(src, dst)
 
-    print(f"✅ Model prepared at {output_dir}")
-    print("   Config: gliner2, GLiNER2VLLMModel")
-    print(
-        "   "
-        f"hidden={vllm_config['encoder_hidden_size']}, "
-        f"encoder_layers={vllm_config['encoder_num_hidden_layers']}"
+    logger.info("Model prepared at %s", output_dir)
+    logger.info("Config: gliner2, GLiNER2VLLMModel")
+    logger.info(
+        "hidden=%s, encoder_layers=%s",
+        vllm_config["encoder_hidden_size"],
+        vllm_config["encoder_num_hidden_layers"],
     )
     return output_dir
 

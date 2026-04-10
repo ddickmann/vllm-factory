@@ -11,7 +11,8 @@ Entry-point group: vllm.io_processor_plugins
 Entry-point name:  deberta_gliner2_io
 
 Request format (online POST /pooling):
-    {"data": {"text": "...", "schema": {...},
+    {"data": {"text": "...", "labels": [...],
+              "schema": {...},
               "threshold": 0.5,
               "include_confidence": false,
               "include_spans": false},
@@ -105,10 +106,15 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
         include_spans = self._coerce_bool(data.get("include_spans", False), "include_spans")
 
         raw_schema = data.get("schema")
-        if raw_schema is None:
-            raise ValueError("Request must include schema")
+        labels = data.get("labels")
 
-        schema = normalize_gliner2_schema(raw_schema)
+        if raw_schema is not None:
+            schema = normalize_gliner2_schema(raw_schema)
+        elif labels is not None:
+            raw_schema = {"entities": labels}
+            schema = normalize_gliner2_schema(raw_schema)
+        else:
+            raise ValueError("Request must include schema or labels")
 
         return GLiNER2Input(
             text=text,
