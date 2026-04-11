@@ -24,6 +24,7 @@ Request format (offline):
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Dict
@@ -32,6 +33,8 @@ from transformers import AutoTokenizer
 from vllm.config import VllmConfig
 
 from plugins.deberta_gliner2.processor import (
+    build_special_token_ids,
+    build_tokenization_cache,
     decode_output,
     format_results,
     normalize_gliner2_schema,
@@ -74,6 +77,9 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             use_fast=True,
             trust_remote_code=True,
         )
+        self._tokenization_cache = build_tokenization_cache(self._tokenizer)
+        self._special_token_ids = build_special_token_ids(self._tokenizer)
+        self._schema_preprocess_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 
     @staticmethod
     def _coerce_bool(value: Any, field_name: str) -> bool:
@@ -144,6 +150,9 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             parsed_input.schema,
             max_model_len=self._max_model_len,
             truncate_overflow_text=parsed_input.truncate_overflow_text,
+            special_token_ids=self._special_token_ids or None,
+            tokenization_cache=self._tokenization_cache,
+            schema_cache=self._schema_preprocess_cache,
         )
 
         ids_list = result["input_ids"]
