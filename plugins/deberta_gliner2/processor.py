@@ -279,6 +279,65 @@ def _transform_json_structure(parent: str, fields: list[dict[str, Any]]) -> list
     return tokens
 
 
+def _count_tokenized_length(tokenizer, tokens: list[str]) -> int:
+    return sum(len(tokenizer.tokenize(token)) for token in tokens)
+
+
+def _truncate_text_to_token_budget(
+    tokenizer,
+    schema_tokens_list: list[list[str]],
+    text_tokens: list[str],
+    start_mapping: list[int],
+    end_mapping: list[int],
+    max_model_len: int | None,
+    truncate_overflow_text: bool = False,
+) -> tuple[list[str], list[int], list[int]]:
+    if max_model_len is None:
+        return text_tokens, start_mapping, end_mapping
+
+    schema_budget_tokens = []
+    for idx, struct in enumerate(schema_tokens_list):
+        schema_budget_tokens.extend(struct)
+        if idx < len(schema_tokens_list) - 1:
+            schema_budget_tokens.append(SEP_STRUCT)
+    schema_budget_tokens.append(SEP_TEXT)
+
+    schema_len = _count_tokenized_length(tokenizer, schema_budget_tokens)
+    if schema_len >= max_model_len:
+        raise ValueError(
+            "GLiNER2 schema is too large for the configured max_model_len; "
+            "reduce schema size or increase max_model_len"
+        )
+
+    total_len = schema_len + _count_tokenized_length(tokenizer, text_tokens)
+    if total_len <= max_model_len:
+        return text_tokens, start_mapping, end_mapping
+
+    if not truncate_overflow_text:
+        raise ValueError(
+            "GLiNER2 request exceeds the configured max_model_len; "
+            "reduce text or schema size, increase max_model_len, or set "
+            "'truncate_overflow_text' to true"
+        )
+
+    kept = 0
+    used = schema_len
+    for idx, token in enumerate(text_tokens):
+        token_len = len(tokenizer.tokenize(token))
+        if used + token_len > max_model_len:
+            break
+        used += token_len
+        kept = idx + 1
+
+    if kept == 0:
+        raise ValueError(
+            "GLiNER2 schema leaves no room for text tokens within max_model_len; "
+            "reduce schema size or increase max_model_len"
+        )
+
+    return text_tokens[:kept], start_mapping[:kept], end_mapping[:kept]
+
+
 def infer_schemas_from_dict(schema: Dict) -> Dict:
     """Infer schema token sequences and task types from schema dict (inference mode)."""
     schemas = []
@@ -286,24 +345,16 @@ def infer_schemas_from_dict(schema: Dict) -> Dict:
     types = []
     meta = schema.get("_meta", {})
     structure_meta = meta.get("json_structures", {})
+    relation_meta = meta.get("relations", {})
 
     for item in schema.get("json_structures", []):
         for parent, fields in item.items():
             field_names = list(fields.keys())
             field_defs = structure_meta.get(parent, [])
-            field_descs = (
-                {fd["name"]: fd.get("description", "") for fd in field_defs} if field_defs else {}
-            )
-            mode = "descriptions" if any(field_descs.values()) else "none"
-            schemas.append(
-                _transform_schema(
-                    parent,
-                    field_names,
-                    C_TOKEN,
-                    label_descriptions=field_descs,
-                    example_mode=mode,
-                )
-            )
+            if field_defs:
+                schemas.append(_transform_json_structure(parent, field_defs))
+            else:
+                schemas.append(_transform_schema(parent, field_names, C_TOKEN))
             count = sum(1 for value in fields.values() if value != "")
             labels.append([max(1, count), []])
             types.append("json_structures")
@@ -329,7 +380,20 @@ def infer_schemas_from_dict(schema: Dict) -> Dict:
         for parent in item:
             relation_fields.append(parent)
     if relation_fields:
-        schemas.append(_transform_schema("relations", relation_fields, R_TOKEN))
+        mode = (
+            "descriptions"
+            if any(relation_meta.get(field, "") for field in relation_fields)
+            else "none"
+        )
+        schemas.append(
+            _transform_schema(
+                "relations",
+                relation_fields,
+                R_TOKEN,
+                label_descriptions=relation_meta,
+                example_mode=mode,
+            )
+        )
         labels.append([1, []])
         types.append("relations")
 
@@ -407,7 +471,14 @@ def format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens):
 # ==================================================================
 
 
-def preprocess(tokenizer, text: str, schema: Dict, token_pooling: str = "first"):
+def preprocess(
+    tokenizer,
+    text: str,
+    schema: Dict,
+    token_pooling: str = "first",
+    max_model_len: int | None = None,
+    truncate_overflow_text: bool = False,
+):
     """Preprocess text + schema for vLLM inference.
 
     Returns a dict with all data needed for vLLM embed call.
@@ -425,6 +496,17 @@ def preprocess(tokenizer, text: str, schema: Dict, token_pooling: str = "first")
     processed = infer_schemas_from_dict(schema)
     schema_tokens_list = processed["schemas"]
     task_types = processed["task_types"]
+    text_tokens, start_mapping, end_mapping = _truncate_text_to_token_budget(
+        tokenizer,
+        schema_tokens_list,
+        text_tokens,
+        start_mapping,
+        end_mapping,
+        max_model_len,
+        truncate_overflow_text,
+    )
+    if end_mapping:
+        text = text[: end_mapping[-1]]
 
     fmt = format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens)
 
@@ -601,9 +683,7 @@ def format_results(
             relation_items = []
             for inst in value.get("instances", []):
                 filtered_instance = {
-                    field: _strip_nested_metadata(
-                        field_value, include_confidence, include_spans
-                    )
+                    field: _strip_nested_metadata(field_value, include_confidence, include_spans)
                     for field, field_value in inst.items()
                     if field_value is not None and _passes_threshold(field_value, threshold)
                 }
