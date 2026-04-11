@@ -25,6 +25,44 @@ llm = LLM("fastino/gliner2-large-v1", trust_remote_code=True)
 - `threshold`, `include_confidence`, and `include_spans` are request-level flags.
 - `labels` is the simplest path for benchmarks and parity tests.
 
+Simple labels payload:
+
+```json
+{
+  "data": {
+    "text": "Apple released iPhone 15 in Cupertino.",
+    "labels": ["company", "product", "location"]
+  }
+}
+```
+
+Mixed schema payload:
+
+```json
+{
+  "data": {
+    "text": "Tim Cook announced the iPhone 15 at Apple Park.",
+    "schema": {
+      "entities": {"person": "Person names", "product": "Product names"},
+      "classifications": [{"task": "sentiment", "labels": ["positive", "negative", "neutral"]}],
+      "relations": ["announced_at"],
+      "structures": {"summary": {"fields": [{"name": "product", "dtype": "str"}]}}
+    },
+    "threshold": 0.5,
+    "include_confidence": true,
+    "include_spans": true
+  }
+}
+```
+
+Response notes:
+
+- `entities` returns per-label lists.
+- single-label classification returns one label or `null` if filtered by `threshold`.
+- multi-label classification returns a list.
+- `relation_extraction` contains relation results.
+- JSON structures return per-structure instance lists.
+
 ## Serve
 
 Requires a prepared model directory (see `forge/model_prep.py`).

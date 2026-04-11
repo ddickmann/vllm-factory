@@ -47,7 +47,7 @@ class GLiNER2Input:
     threshold: float = 0.5
     include_confidence: bool = False
     include_spans: bool = False
-    raw_schema: Dict = field(default_factory=dict)
+    truncate_overflow_text: bool = False
 
 
 class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
@@ -68,6 +68,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
         super().__init__(vllm_config, *args, **kwargs)
 
         model_id = vllm_config.model_config.model
+        self._max_model_len = getattr(vllm_config.model_config, "max_model_len", None)
         self._tokenizer = AutoTokenizer.from_pretrained(
             model_id,
             use_fast=True,
@@ -109,6 +110,9 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             data.get("include_confidence", False), "include_confidence"
         )
         include_spans = self._coerce_bool(data.get("include_spans", False), "include_spans")
+        truncate_overflow_text = self._coerce_bool(
+            data.get("truncate_overflow_text", False), "truncate_overflow_text"
+        )
 
         raw_schema = data.get("schema")
         labels = data.get("labels")
@@ -116,8 +120,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
         if raw_schema is not None:
             schema = normalize_gliner2_schema(raw_schema)
         elif labels is not None:
-            raw_schema = {"entities": labels}
-            schema = normalize_gliner2_schema(raw_schema)
+            schema = normalize_gliner2_schema({"entities": labels})
         else:
             raise ValueError("Request must include schema or labels")
 
@@ -127,7 +130,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             threshold=threshold,
             include_confidence=include_confidence,
             include_spans=include_spans,
-            raw_schema=raw_schema,
+            truncate_overflow_text=truncate_overflow_text,
         )
 
     def factory_pre_process(
@@ -135,7 +138,13 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
         parsed_input: GLiNER2Input,
         request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
-        result = preprocess(self._tokenizer, parsed_input.text, parsed_input.schema)
+        result = preprocess(
+            self._tokenizer,
+            parsed_input.text,
+            parsed_input.schema,
+            max_model_len=self._max_model_len,
+            truncate_overflow_text=parsed_input.truncate_overflow_text,
+        )
 
         ids_list = result["input_ids"]
 
@@ -162,9 +171,9 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             "original_text": result["original_text"],
             "start_mapping": result["start_mapping"],
             "end_mapping": result["end_mapping"],
+            "threshold": parsed_input.threshold,
             "include_confidence": parsed_input.include_confidence,
             "include_spans": parsed_input.include_spans,
-            "raw_schema": getattr(parsed_input, "raw_schema", parsed_input.schema),
         }
 
         self._stash(extra_kwargs=gliner_data, request_id=request_id, meta=postprocess_meta)
@@ -192,6 +201,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
 
         return format_results(
             results,
+            threshold=request_meta.get("threshold", 0.5),
             include_confidence=request_meta.get("include_confidence", False),
             include_spans=request_meta.get("include_spans", False),
         )
