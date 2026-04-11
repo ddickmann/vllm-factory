@@ -47,7 +47,6 @@ class GLiNER2Input:
     threshold: float = 0.5
     include_confidence: bool = False
     include_spans: bool = False
-    raw_schema: Dict = field(default_factory=dict)
 
 
 class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
@@ -116,8 +115,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
         if raw_schema is not None:
             schema = normalize_gliner2_schema(raw_schema)
         elif labels is not None:
-            raw_schema = {"entities": labels}
-            schema = normalize_gliner2_schema(raw_schema)
+            schema = normalize_gliner2_schema({"entities": labels})
         else:
             raise ValueError("Request must include schema or labels")
 
@@ -127,7 +125,6 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             threshold=threshold,
             include_confidence=include_confidence,
             include_spans=include_spans,
-            raw_schema=raw_schema,
         )
 
     def factory_pre_process(
@@ -162,9 +159,9 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             "original_text": result["original_text"],
             "start_mapping": result["start_mapping"],
             "end_mapping": result["end_mapping"],
+            "threshold": parsed_input.threshold,
             "include_confidence": parsed_input.include_confidence,
             "include_spans": parsed_input.include_spans,
-            "raw_schema": getattr(parsed_input, "raw_schema", parsed_input.schema),
         }
 
         self._stash(extra_kwargs=gliner_data, request_id=request_id, meta=postprocess_meta)
@@ -192,6 +189,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
 
         return format_results(
             results,
+            threshold=request_meta.get("threshold", 0.5),
             include_confidence=request_meta.get("include_confidence", False),
             include_spans=request_meta.get("include_spans", False),
         )

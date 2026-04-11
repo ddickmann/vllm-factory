@@ -193,12 +193,19 @@ def prepare_gliner2_model(
     logger.info("Preparing %s for vLLM (deberta_gliner2)...", hf_model_id)
 
     repo_files = list_repo_files(hf_model_id)
-    extractor_cfg = _read_json(_download_file(hf_model_id, "config.json"))
-    encoder_cfg = _read_json(_download_file(hf_model_id, "encoder_config/config.json"))
+    extractor_cfg = _read_json(
+        _require_download(hf_model_id, "config.json", "GLiNER2 extractor config")
+    )
+    encoder_cfg = _read_json(
+        _require_download(hf_model_id, "encoder_config/config.json", "GLiNER2 encoder config")
+    )
 
     os.makedirs(output_dir, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(hf_model_id, trust_remote_code=True)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(hf_model_id, trust_remote_code=True)
+    except Exception as exc:
+        raise RuntimeError(f"Could not load tokenizer for '{hf_model_id}'") from exc
     tokenizer.save_pretrained(output_dir)
 
     vllm_config = {
@@ -236,12 +243,17 @@ def prepare_gliner2_model(
         json.dump(vllm_config, f, indent=2)
 
     weight_files = [f for f in repo_files if f.endswith((".safetensors", ".bin", ".pt"))]
+    if not weight_files:
+        raise RuntimeError(f"No model weights found for '{hf_model_id}'")
     for wf in weight_files:
-        src = _download_file(hf_model_id, wf)
-        if src:
-            dst = os.path.join(output_dir, wf)
-            if not os.path.exists(dst):
+        src = _require_download(hf_model_id, wf, "GLiNER2 weight file")
+        dst = os.path.join(output_dir, wf)
+        if not os.path.exists(dst):
+            try:
                 os.symlink(src, dst)
+            except OSError:
+                logger.info("Symlink failed for %s; copying instead", wf)
+                shutil.copy2(src, dst)
 
     logger.info("Model prepared at %s", output_dir)
     logger.info("Config: gliner2, GLiNER2VLLMModel")
@@ -259,6 +271,13 @@ def _download_file(repo_id: str, filename: str) -> str | None:
         return hf_hub_download(repo_id=repo_id, filename=filename)
     except Exception:
         return None
+
+
+def _require_download(repo_id: str, filename: str, description: str) -> str:
+    path = _download_file(repo_id, filename)
+    if path is None:
+        raise RuntimeError(f"Missing {description} '{filename}' for '{repo_id}'")
+    return path
 
 
 def _read_json(path: str) -> dict:

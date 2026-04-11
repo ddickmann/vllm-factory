@@ -487,6 +487,15 @@ def decode_output(raw_output, schema: Dict, task_types: List[str] = None) -> Dic
     return results
 
 
+def _passes_threshold(item: Any, threshold: float | None) -> bool:
+    if threshold is None or not isinstance(item, dict):
+        return True
+    confidence = item.get("confidence")
+    if confidence is None:
+        return True
+    return float(confidence) >= threshold
+
+
 def _format_entity_record(
     item: dict[str, Any], include_confidence: bool, include_spans: bool
 ) -> Any:
@@ -529,7 +538,10 @@ def _strip_nested_metadata(value: Any, include_confidence: bool, include_spans: 
 
 
 def format_results(
-    results: Dict, include_confidence: bool = False, include_spans: bool = False
+    results: Dict,
+    threshold: float | None = None,
+    include_confidence: bool = False,
+    include_spans: bool = False,
 ) -> Dict:
     """Format raw results into user-friendly output."""
     formatted = {}
@@ -553,7 +565,7 @@ def format_results(
                 selected = [
                     (label, probs[idx].item())
                     for idx, label in enumerate(labels)
-                    if probs[idx].item() >= 0.5
+                    if probs[idx].item() >= (0.5 if threshold is None else threshold)
                 ]
                 if include_confidence:
                     formatted[key] = [
@@ -564,8 +576,11 @@ def format_results(
             else:
                 probs = torch.softmax(torch.tensor(logits), dim=-1)
                 best = int(probs.argmax().item())
-                if include_confidence:
-                    formatted[key] = {"label": labels[best], "confidence": probs[best].item()}
+                best_score = probs[best].item()
+                if threshold is not None and best_score < threshold:
+                    formatted[key] = None
+                elif include_confidence:
+                    formatted[key] = {"label": labels[best], "confidence": best_score}
                 else:
                     formatted[key] = labels[best]
 
@@ -574,6 +589,8 @@ def format_results(
             for label, spans in value.get("entities", {}).items():
                 records = []
                 for item in spans:
+                    if not _passes_threshold(item, threshold):
+                        continue
                     record = _format_entity_record(item, include_confidence, include_spans)
                     if record is not None:
                         records.append(record)
@@ -583,25 +600,27 @@ def format_results(
         elif result_type == "relations":
             relation_items = []
             for inst in value.get("instances", []):
-                relation_items.append(
-                    {
-                        field: _strip_nested_metadata(
-                            field_value, include_confidence, include_spans
-                        )
-                        for field, field_value in inst.items()
-                        if field_value is not None
-                    }
-                )
+                filtered_instance = {
+                    field: _strip_nested_metadata(
+                        field_value, include_confidence, include_spans
+                    )
+                    for field, field_value in inst.items()
+                    if field_value is not None and _passes_threshold(field_value, threshold)
+                }
+                if filtered_instance:
+                    relation_items.append(filtered_instance)
             relations[key] = relation_items
 
         elif result_type == "json_structures":
-            formatted[key] = [
-                {
+            formatted[key] = []
+            for inst in value.get("instances", []):
+                filtered_instance = {
                     field: _strip_nested_metadata(field_value, include_confidence, include_spans)
                     for field, field_value in inst.items()
+                    if _passes_threshold(field_value, threshold)
                 }
-                for inst in value.get("instances", [])
-            ]
+                if filtered_instance:
+                    formatted[key].append(filtered_instance)
 
     if relations:
         formatted["relation_extraction"] = relations
