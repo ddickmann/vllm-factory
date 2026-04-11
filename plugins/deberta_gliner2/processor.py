@@ -240,17 +240,6 @@ def build_schema_for_classification(tasks: Dict) -> Dict:
 # ==================================================================
 
 
-def _render_structure_field(field: dict[str, Any]) -> str:
-    parts = [field["name"]]
-    if field.get("dtype"):
-        parts.append(f"type:{field['dtype']}")
-    if field.get("choices"):
-        parts.append(f"choices:{'|'.join(field['choices'])}")
-    if field.get("description"):
-        parts.append(field["description"])
-    return " ".join(parts)
-
-
 def _transform_schema(
     parent, fields, child_prefix, prompt=None, label_descriptions=None, example_mode="none"
 ):
@@ -269,16 +258,6 @@ def _transform_schema(
         tokens.extend([child_prefix, field])
     tokens.extend([")", ")"])
     return tokens
-
-
-def _transform_json_structure(parent: str, fields: list[dict[str, Any]]) -> list[str]:
-    tokens = ["(", P_TOKEN, parent, "("]
-    for field in fields:
-        tokens.extend([C_TOKEN, _render_structure_field(field)])
-    tokens.extend([")", ")"])
-    return tokens
-
-
 def _count_tokenized_length(tokenizer, tokens: list[str]) -> int:
     return sum(len(tokenizer.tokenize(token)) for token in tokens)
 
@@ -351,10 +330,19 @@ def infer_schemas_from_dict(schema: Dict) -> Dict:
         for parent, fields in item.items():
             field_names = list(fields.keys())
             field_defs = structure_meta.get(parent, [])
-            if field_defs:
-                schemas.append(_transform_json_structure(parent, field_defs))
-            else:
-                schemas.append(_transform_schema(parent, field_names, C_TOKEN))
+            field_descs = (
+                {fd["name"]: fd.get("description", "") for fd in field_defs} if field_defs else {}
+            )
+            mode = "descriptions" if any(field_descs.values()) else "none"
+            schemas.append(
+                _transform_schema(
+                    parent,
+                    field_names,
+                    C_TOKEN,
+                    label_descriptions=field_descs,
+                    example_mode=mode,
+                )
+            )
             count = sum(1 for value in fields.values() if value != "")
             labels.append([max(1, count), []])
             types.append("json_structures")
@@ -567,17 +555,6 @@ def decode_output(raw_output, schema: Dict, task_types: List[str] = None) -> Dic
             value["multi_label"] = bool(config.get("multi_label", False))
 
     return results
-
-
-def _passes_threshold(item: Any, threshold: float | None) -> bool:
-    if threshold is None or not isinstance(item, dict):
-        return True
-    confidence = item.get("confidence")
-    if confidence is None:
-        return True
-    return float(confidence) >= threshold
-
-
 def _format_entity_record(
     item: dict[str, Any], include_confidence: bool, include_spans: bool
 ) -> Any:
@@ -671,8 +648,6 @@ def format_results(
             for label, spans in value.get("entities", {}).items():
                 records = []
                 for item in spans:
-                    if not _passes_threshold(item, threshold):
-                        continue
                     record = _format_entity_record(item, include_confidence, include_spans)
                     if record is not None:
                         records.append(record)
@@ -685,7 +660,7 @@ def format_results(
                 filtered_instance = {
                     field: _strip_nested_metadata(field_value, include_confidence, include_spans)
                     for field, field_value in inst.items()
-                    if field_value is not None and _passes_threshold(field_value, threshold)
+                    if field_value is not None
                 }
                 if filtered_instance:
                     relation_items.append(filtered_instance)
@@ -697,7 +672,6 @@ def format_results(
                 filtered_instance = {
                     field: _strip_nested_metadata(field_value, include_confidence, include_spans)
                     for field, field_value in inst.items()
-                    if _passes_threshold(field_value, threshold)
                 }
                 if filtered_instance:
                     formatted[key].append(filtered_instance)
