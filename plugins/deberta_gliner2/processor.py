@@ -258,6 +258,8 @@ def _transform_schema(
         tokens.extend([child_prefix, field])
     tokens.extend([")", ")"])
     return tokens
+
+
 def _count_tokenized_length(tokenizer, tokens: list[str]) -> int:
     return sum(len(tokenizer.tokenize(token)) for token in tokens)
 
@@ -555,6 +557,8 @@ def decode_output(raw_output, schema: Dict, task_types: List[str] = None) -> Dic
             value["multi_label"] = bool(config.get("multi_label", False))
 
     return results
+
+
 def _format_entity_record(
     item: dict[str, Any], include_confidence: bool, include_spans: bool
 ) -> Any:
