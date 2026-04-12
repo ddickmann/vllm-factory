@@ -7,6 +7,7 @@ Postprocessing: Raw output tensor → structured extraction results.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import OrderedDict
@@ -71,6 +72,42 @@ def _empty_schema() -> dict[str, Any]:
             "relations": {},
         },
     }
+
+
+def build_special_token_ids(tokenizer) -> dict[str, int]:
+    special_ids: dict[str, int] = {}
+    for tok in SPECIAL_TOKENS:
+        ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(tok))
+        if ids:
+            special_ids[tok] = ids[0]
+    return special_ids
+
+
+def build_tokenization_cache(tokenizer) -> dict[str, list[str]]:
+    cache: dict[str, list[str]] = {}
+    for tok in SPECIAL_TOKENS + ["(", ")", ",", "|"]:
+        cache[tok] = tokenizer.tokenize(tok)
+    return cache
+
+
+def _tokenize_cached(
+    tokenizer,
+    token: str,
+    tokenization_cache: dict[str, list[str]] | None = None,
+):
+    if tokenization_cache is None:
+        return tokenizer.tokenize(token)
+    cached = tokenization_cache.get(token)
+    if cached is not None:
+        return cached
+    cached = tokenizer.tokenize(token)
+    tokenization_cache[token] = cached
+    return cached
+
+
+def get_schema_cache_key(schema: dict[str, Any]) -> str:
+    payload = json.dumps(schema, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
 # ==================================================================
@@ -260,8 +297,12 @@ def _transform_schema(
     return tokens
 
 
-def _count_tokenized_length(tokenizer, tokens: list[str]) -> int:
-    return sum(len(tokenizer.tokenize(token)) for token in tokens)
+def _count_tokenized_length(
+    tokenizer,
+    tokens: list[str],
+    tokenization_cache: dict[str, list[str]] | None = None,
+) -> int:
+    return sum(len(_tokenize_cached(tokenizer, token, tokenization_cache)) for token in tokens)
 
 
 def _truncate_text_to_token_budget(
@@ -272,6 +313,7 @@ def _truncate_text_to_token_budget(
     end_mapping: list[int],
     max_model_len: int | None,
     truncate_overflow_text: bool = False,
+    tokenization_cache: dict[str, list[str]] | None = None,
 ) -> tuple[list[str], list[int], list[int]]:
     if max_model_len is None:
         return text_tokens, start_mapping, end_mapping
@@ -283,14 +325,14 @@ def _truncate_text_to_token_budget(
             schema_budget_tokens.append(SEP_STRUCT)
     schema_budget_tokens.append(SEP_TEXT)
 
-    schema_len = _count_tokenized_length(tokenizer, schema_budget_tokens)
+    schema_len = _count_tokenized_length(tokenizer, schema_budget_tokens, tokenization_cache)
     if schema_len >= max_model_len:
         raise ValueError(
             "GLiNER2 schema is too large for the configured max_model_len; "
             "reduce schema size or increase max_model_len"
         )
 
-    total_len = schema_len + _count_tokenized_length(tokenizer, text_tokens)
+    total_len = schema_len + _count_tokenized_length(tokenizer, text_tokens, tokenization_cache)
     if total_len <= max_model_len:
         return text_tokens, start_mapping, end_mapping
 
@@ -304,7 +346,7 @@ def _truncate_text_to_token_budget(
     kept = 0
     used = schema_len
     for idx, token in enumerate(text_tokens):
-        token_len = len(tokenizer.tokenize(token))
+        token_len = len(_tokenize_cached(tokenizer, token, tokenization_cache))
         if used + token_len > max_model_len:
             break
         used += token_len
@@ -413,7 +455,12 @@ def infer_schemas_from_dict(schema: Dict) -> Dict:
 # ==================================================================
 
 
-def format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens):
+def format_input_with_mapping(
+    tokenizer,
+    schema_tokens_list,
+    text_tokens,
+    tokenization_cache: dict[str, list[str]] | None = None,
+):
     """Format schema + text into token IDs with segment mappings."""
     combined = []
     for struct in schema_tokens_list:
@@ -445,7 +492,7 @@ def format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens):
             seg_type = "text"
             schema_idx = text_schema_idx
 
-        sub_tokens = tokenizer.tokenize(token)
+        sub_tokens = _tokenize_cached(tokenizer, token, tokenization_cache)
         subwords.extend(sub_tokens)
         mappings.extend([(seg_type, orig_idx, schema_idx)] * len(sub_tokens))
 
@@ -454,6 +501,35 @@ def format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens):
         "input_ids": input_ids,
         "mapped_indices": mappings,
     }
+
+
+def preprocess_schema(
+    schema: Dict,
+    schema_cache: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    cache_key = get_schema_cache_key(schema)
+    if schema_cache is not None and cache_key in schema_cache:
+        cached = dict(schema_cache[cache_key])
+        if hasattr(schema_cache, "move_to_end"):
+            schema_cache.move_to_end(cache_key)
+        return cached
+
+    processed = infer_schemas_from_dict(schema)
+    schema_tokens_list = processed["schemas"]
+    task_types = processed["task_types"]
+
+    result = {
+        "schema_tokens_list": schema_tokens_list,
+        "task_types": task_types,
+        "schema_count": len(schema_tokens_list),
+    }
+    if schema_cache is not None:
+        schema_cache[cache_key] = dict(result)
+        if hasattr(schema_cache, "move_to_end"):
+            schema_cache.move_to_end(cache_key)
+            while len(schema_cache) > 256:
+                schema_cache.popitem(last=False)
+    return result
 
 
 # ==================================================================
@@ -468,6 +544,9 @@ def preprocess(
     token_pooling: str = "first",
     max_model_len: int | None = None,
     truncate_overflow_text: bool = False,
+    special_token_ids: dict[str, int] | None = None,
+    tokenization_cache: dict[str, list[str]] | None = None,
+    schema_cache: dict[str, dict[str, Any]] | None = None,
 ):
     """Preprocess text + schema for vLLM inference.
 
@@ -478,45 +557,47 @@ def preprocess(
     elif not text:
         text = "."
 
+    schema_state = preprocess_schema(
+        schema,
+        schema_cache=schema_cache,
+    )
+
     word_triples = split_words(text, lower=True)
     text_tokens = [w[0] for w in word_triples]
     start_mapping = [w[1] for w in word_triples]
     end_mapping = [w[2] for w in word_triples]
 
-    processed = infer_schemas_from_dict(schema)
-    schema_tokens_list = processed["schemas"]
-    task_types = processed["task_types"]
     text_tokens, start_mapping, end_mapping = _truncate_text_to_token_budget(
         tokenizer,
-        schema_tokens_list,
+        schema_state["schema_tokens_list"],
         text_tokens,
         start_mapping,
         end_mapping,
         max_model_len,
         truncate_overflow_text,
+        tokenization_cache,
     )
     if end_mapping:
         text = text[: end_mapping[-1]]
 
-    fmt = format_input_with_mapping(tokenizer, schema_tokens_list, text_tokens)
-
-    special_ids = {}
-    for tok in SPECIAL_TOKENS:
-        ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(tok))
-        if ids:
-            special_ids[tok] = ids[0]
+    fmt = format_input_with_mapping(
+        tokenizer,
+        schema_state["schema_tokens_list"],
+        text_tokens,
+        tokenization_cache,
+    )
 
     return {
         "input_ids": fmt["input_ids"],
         "mapped_indices": fmt["mapped_indices"],
-        "schema_tokens_list": schema_tokens_list,
-        "task_types": task_types,
+        "schema_tokens_list": schema_state["schema_tokens_list"],
+        "task_types": schema_state["task_types"],
         "text_tokens": text_tokens,
-        "schema_count": len(schema_tokens_list),
+        "schema_count": schema_state["schema_count"],
         "original_text": text,
         "start_mapping": start_mapping,
         "end_mapping": end_mapping,
-        "special_token_ids": special_ids,
+        "special_token_ids": special_token_ids or build_special_token_ids(tokenizer),
         "token_pooling": token_pooling,
         "schema_dict": schema,
     }
