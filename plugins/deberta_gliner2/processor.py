@@ -627,10 +627,7 @@ def _build_threshold_meta(meta: dict[str, Any]) -> dict[str, Any]:
             for name, m in entities_meta.items()
         },
         "json_structures": {
-            parent: [
-                f.get("threshold") if isinstance(f, dict) else None
-                for f in fields
-            ]
+            parent: [f.get("threshold") if isinstance(f, dict) else None for f in fields]
             for parent, fields in structures_meta.items()
         },
         "relations": {
@@ -743,7 +740,9 @@ def decode_output(raw_output, schema: Dict, task_types: List[str] = None) -> Dic
         for item in classifications
         if isinstance(item, dict) and item.get("task")
     }
-    cls_meta = schema.get("_meta", {}).get("classifications", {}) if isinstance(schema, dict) else {}
+    cls_meta = (
+        schema.get("_meta", {}).get("classifications", {}) if isinstance(schema, dict) else {}
+    )
     for key, value in results.items():
         if not isinstance(value, dict) or value.get("type") != "classification":
             continue
@@ -829,7 +828,8 @@ def format_results(
                 selected = [
                     (label, probs[idx].item())
                     for idx, label in enumerate(labels)
-                    if probs[idx].item() >= (0.5 if effective_threshold is None else effective_threshold)
+                    if probs[idx].item()
+                    >= (0.5 if effective_threshold is None else effective_threshold)
                 ]
                 if include_confidence:
                     formatted[key] = [

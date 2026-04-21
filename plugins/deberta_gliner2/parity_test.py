@@ -106,7 +106,9 @@ def phase_prepare():
         include_confidence=True,
         include_spans=True,
     )
-    per_threshold_entities = per_threshold_result[0].get("entities", {}) if per_threshold_result else {}
+    per_threshold_entities = (
+        per_threshold_result[0].get("entities", {}) if per_threshold_result else {}
+    )
 
     print("\n--- Per-Entity Threshold Results ---")
     print(json.dumps(per_threshold_entities, indent=2, default=str))
@@ -445,31 +447,39 @@ def phase_test():
     print("Per-entity threshold parity")
     print("=" * 60)
 
-    ref_per_threshold = refs.get("per_threshold_entities", {})
+    ref_per_threshold = ref.get("per_threshold_entities", {})
     if ref_per_threshold:
-        per_t_schema = normalize_gliner2_schema({
-            "entities": {
-                "person": {"threshold": 0.9},
-                "email": {},
+        per_t_schema = normalize_gliner2_schema(
+            {
+                "entities": {
+                    "person": {"threshold": 0.9},
+                    "email": {},
+                }
             }
-        })
-        per_t_pp = PoolingParams(
-            additional_data=json.dumps({
-                "schema": {
-                    "entities": {
-                        "person": {"threshold": 0.9},
-                        "email": {},
-                    }
-                },
-                "threshold": THRESHOLD,
-                "include_confidence": True,
-                "include_spans": True,
-            })
         )
-        per_t_out = llm.encode(
-            TokensPrompt(prompt_token_ids=preprocess(
-                tokenizer, TEXT, per_t_schema,
-            )["input_ids"]),
+        per_t_pp = PoolingParams(
+            additional_data=json.dumps(
+                {
+                    "schema": {
+                        "entities": {
+                            "person": {"threshold": 0.9},
+                            "email": {},
+                        }
+                    },
+                    "threshold": THRESHOLD,
+                    "include_confidence": True,
+                    "include_spans": True,
+                }
+            )
+        )
+        per_t_out = vllm_model.encode(
+            TokensPrompt(
+                prompt_token_ids=preprocess(
+                    tokenizer,
+                    TEXT,
+                    per_t_schema,
+                )["input_ids"]
+            ),
             pooling_params=per_t_pp,
             pooling_task="plugin",
         )
@@ -486,11 +496,13 @@ def phase_test():
         print(f"vLLM per-threshold:  {json.dumps(per_t_entities, indent=2, default=str)}")
 
         # Verify that high threshold for person reduces results vs default
-        default_person_count = len(refs.get("entities", {}).get("person", []))
+        default_person_count = len(ref.get("entities", {}).get("person", []))
         per_t_person_count = len(per_t_entities.get("person", []))
         threshold_effective = per_t_person_count <= default_person_count
-        print(f"Person count default={default_person_count} vs per-threshold={per_t_person_count}: "
-              f"{'✅' if threshold_effective else '⚠️'}")
+        print(
+            f"Person count default={default_person_count} vs per-threshold={per_t_person_count}: "
+            f"{'✅' if threshold_effective else '⚠️'}"
+        )
     else:
         print("⚠️  No per-threshold reference found — skipping")
         threshold_effective = True
