@@ -25,6 +25,7 @@ Request format (offline):
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -46,6 +47,11 @@ from vllm_factory.io.base import FactoryIOProcessor, PoolingRequestOutput, Promp
 
 logger = logging.getLogger(__name__)
 
+# Conservative subset of vLLM's LoRA adapter naming conventions; the engine
+# allows richer names but the plugin refuses anything that could collide with
+# the HTTP `model` field or log scraping (whitespace, path separators, etc.).
+_ADAPTER_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-:/]{1,128}$")
+
 
 @dataclass
 class GLiNER2Input:
@@ -55,6 +61,15 @@ class GLiNER2Input:
     include_confidence: bool = False
     include_spans: bool = False
     truncate_overflow_text: bool = False
+    # Optional per-request LoRA adapter selector.  The plugin parses and
+    # validates this field for the gliner2-native request shape; the vLLM
+    # engine still drives LoRARequest selection via the HTTP `model` field
+    # (online /pooling) or the `lora_request=` kwarg on `engine.encode(...)`
+    # (offline).  The Modal `/infer` shim is expected to mirror this value
+    # into `model` before proxying to `/pooling`; offline callers resolve it
+    # through `build_lora_requests(...)` and pass the result to
+    # `LLM.encode(..., lora_request=...)`.
+    adapter: str | None = None
 
 
 class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
@@ -102,6 +117,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             text_length_bucket = obs.get("text_length_bucket")
             task_types = obs.get("task_types")
             request_id = obs.get("request_id", "_unknown")
+            adapter = obs.get("adapter")
 
             if not isinstance(request_started_at, (int, float)):
                 return
@@ -120,7 +136,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             logger.info(
                 "GLiNER2 request complete request_id=%s preprocess_ms=%.3f total_ms=%.3f "
                 "schema_cache_hit=%s schema_count=%d text_token_count=%d text_length_bucket=%s "
-                "task_types=%s",
+                "task_types=%s adapter=%s",
                 request_id,
                 preprocess_elapsed_ms,
                 total_elapsed_ms,
@@ -129,6 +145,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
                 text_token_count,
                 text_length_bucket,
                 task_types,
+                adapter if adapter is not None else "_base",
             )
         except Exception:
             try:
@@ -155,6 +172,25 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
         if isinstance(value, bool):
             return value
         raise ValueError(f"'{field_name}' must be a boolean")
+
+    @staticmethod
+    def _coerce_adapter(value: Any) -> str | None:
+        """Validate the optional per-request LoRA adapter selector.
+
+        Returns ``None`` when the field is absent or explicitly null.  Empty
+        strings are treated as null to keep wire-format ergonomics aligned
+        with common JSON producers (pydantic v1, gliner2 request models).
+        """
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("'adapter' must be a string or null")
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if not _ADAPTER_NAME_RE.match(stripped):
+            raise ValueError(f"'adapter' must match ^[A-Za-z0-9_.\\-:/]{{1,128}}$ — got {value!r}")
+        return stripped
 
     # ------------------------------------------------------------------
     # FactoryIOProcessor implementation
@@ -189,6 +225,8 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             data.get("truncate_overflow_text", False), "truncate_overflow_text"
         )
 
+        adapter = self._coerce_adapter(data.get("adapter"))
+
         raw_schema = data.get("schema")
         labels = data.get("labels")
 
@@ -206,6 +244,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             include_confidence=include_confidence,
             include_spans=include_spans,
             truncate_overflow_text=truncate_overflow_text,
+            adapter=adapter,
         )
 
     def factory_pre_process(
@@ -254,6 +293,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
             "threshold": parsed_input.threshold,
             "include_confidence": parsed_input.include_confidence,
             "include_spans": parsed_input.include_spans,
+            "adapter": parsed_input.adapter,
             "_observability": {
                 "request_id": request_id or "_offline",
                 "request_started_at": request_started_at,
@@ -263,6 +303,7 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
                 "text_token_count": len(result["text_tokens"]),
                 "text_length_bucket": self._text_length_bucket(len(result["text_tokens"])),
                 "task_types": self._task_shape(result["task_types"]),
+                "adapter": parsed_input.adapter,
             },
         }
 
@@ -290,12 +331,21 @@ class DeBERTaGLiNER2IOProcessor(FactoryIOProcessor):
                 task_types=request_meta["task_types"],
             )
 
-            return format_results(
+            formatted = format_results(
                 results,
                 threshold=request_meta.get("threshold", 0.5),
                 include_confidence=request_meta.get("include_confidence", False),
                 include_spans=request_meta.get("include_spans", False),
             )
+            # Echo the selected adapter back to the caller.  vLLM picks the
+            # actual LoRA via `request.model` (online) or the `lora_request`
+            # kwarg (offline); this field is informational but essential for
+            # cross-LoRA bench harnesses to verify routing end-to-end.
+            if isinstance(formatted, dict):
+                adapter = request_meta.get("adapter")
+                if adapter is not None:
+                    formatted.setdefault("adapter", adapter)
+            return formatted
         finally:
             self._log_observability(request_meta)
 
