@@ -318,6 +318,7 @@ class GLiNER2Pooler(nn.Module):
         threshold = kwargs.get("threshold", 0.5)
         schema_dict = kwargs.get("schema_dict", {})
         token_pooling = kwargs.get("token_pooling", "first")
+        threshold_meta = kwargs.get("threshold_meta", {})
 
         seq_len = tok_embs.shape[0]
         hidden = tok_embs.shape[-1]
@@ -410,7 +411,7 @@ class GLiNER2Pooler(nn.Module):
                     span_scores, pred_count, field_names, task_type,
                     schema_name, text_len_actual, text_tokens,
                     original_text, start_mapping, end_mapping,
-                    threshold, schema_dict,
+                    threshold, schema_dict, threshold_meta,
                 )
                 results[schema_name] = decoded
 
@@ -449,25 +450,43 @@ class GLiNER2Pooler(nn.Module):
         self, span_scores, pred_count, field_names, task_type,
         schema_name, text_len, text_tokens, original_text,
         start_mapping, end_mapping, threshold, schema_dict,
+        threshold_meta=None,
     ) -> dict:
         """Decode span scores into structured results."""
+        if threshold_meta is None:
+            threshold_meta = {}
 
         if schema_name == "entities":
+            entity_thresholds = threshold_meta.get("entities", {})
+            per_field = [
+                entity_thresholds.get(name) or threshold
+                for name in field_names
+            ]
             return self._decode_entities(
                 span_scores, field_names, text_len, text_tokens,
                 original_text, start_mapping, end_mapping, threshold,
+                per_field_thresholds=per_field,
             )
         elif task_type == "relations":
+            rel_threshold = (
+                threshold_meta.get("relations", {}).get(schema_name) or threshold
+            )
             return self._decode_relations(
                 span_scores, pred_count, field_names, text_len,
                 text_tokens, original_text, start_mapping, end_mapping,
-                threshold, schema_name,
+                rel_threshold, schema_name,
             )
         else:
+            struct_thresholds = threshold_meta.get("json_structures", {}).get(schema_name, [])
+            per_field = [
+                (struct_thresholds[i] if i < len(struct_thresholds) and struct_thresholds[i] is not None else threshold)
+                for i in range(len(field_names))
+            ]
             return self._decode_structures(
                 span_scores, pred_count, field_names, text_len,
                 text_tokens, original_text, start_mapping, end_mapping,
                 threshold, schema_name, schema_dict,
+                per_field_thresholds=per_field,
             )
 
     def _find_spans(self, scores, threshold, text_len, text,
@@ -504,11 +523,13 @@ class GLiNER2Pooler(nn.Module):
         return [{"text": s[0], "confidence": s[1], "start": s[2], "end": s[3]} for s in selected]
 
     def _decode_entities(self, span_scores, field_names, text_len,
-                         text_tokens, text, start_map, end_map, threshold):
+                         text_tokens, text, start_map, end_map, threshold,
+                         per_field_thresholds=None):
         scores = span_scores[0, :, -text_len:]
         entity_results = OrderedDict()
         for idx, name in enumerate(field_names):
-            spans = self._find_spans(scores[idx], threshold, text_len, text, start_map, end_map)
+            t = per_field_thresholds[idx] if per_field_thresholds else threshold
+            spans = self._find_spans(scores[idx], t, text_len, text, start_map, end_map)
             entity_results[name] = self._format_spans(spans)
         return {"type": "entities", "entities": entity_results}
 
@@ -530,13 +551,14 @@ class GLiNER2Pooler(nn.Module):
 
     def _decode_structures(self, span_scores, count, field_names, text_len,
                            text_tokens, text, start_map, end_map, threshold,
-                           schema_name, schema_dict):
+                           schema_name, schema_dict, per_field_thresholds=None):
         instances = []
         for inst in range(count):
             scores = span_scores[inst, :, -text_len:]
             instance = OrderedDict()
             for fidx, fname in enumerate(field_names):
-                spans = self._find_spans(scores[fidx], threshold, text_len, text, start_map, end_map)
+                t = per_field_thresholds[fidx] if per_field_thresholds else threshold
+                spans = self._find_spans(scores[fidx], t, text_len, text, start_map, end_map)
                 if spans:
                     instance[fname] = {"text": spans[0][0], "confidence": spans[0][1]}
                 else:
