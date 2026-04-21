@@ -63,9 +63,9 @@ THRESHOLD = 0.5
 # ======================================================================
 
 
-def phase_prepare(model_name: str = MODEL,
-                  local_model_dir: str = LOCAL_MODEL_DIR,
-                  ref_file: str = REF_FILE):
+def phase_prepare(
+    model_name: str = MODEL, local_model_dir: str = LOCAL_MODEL_DIR, ref_file: str = REF_FILE
+):
     import safetensors.torch
     from gliner2 import GLiNER2
 
@@ -187,8 +187,10 @@ def phase_prepare(model_name: str = MODEL,
 
     # Save tokenizer
     model.processor.tokenizer.save_pretrained(local_model_dir)
-    print(f"Model dir: {local_model_dir} ({len(deduped)} weights, "
-          f"counting_layer={model.config.counting_layer})")
+    print(
+        f"Model dir: {local_model_dir} ({len(deduped)} weights, "
+        f"counting_layer={model.config.counting_layer})"
+    )
     print("✅ Phase 1 complete\n")
 
 
@@ -197,9 +199,9 @@ def phase_prepare(model_name: str = MODEL,
 # ======================================================================
 
 
-def phase_test(model_name: str = MODEL,
-               local_model_dir: str = LOCAL_MODEL_DIR,
-               ref_file: str = REF_FILE) -> bool:
+def phase_test(
+    model_name: str = MODEL, local_model_dir: str = LOCAL_MODEL_DIR, ref_file: str = REF_FILE
+) -> bool:
     from transformers import AutoTokenizer
     from vllm import LLM, PoolingParams
     from vllm.inputs import TokensPrompt
