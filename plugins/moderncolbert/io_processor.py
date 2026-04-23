@@ -143,9 +143,7 @@ class ModernColBERTIOProcessor(FactoryIOProcessor):
         request_id: str | None,
     ) -> PromptType | Sequence[PromptType]:
         prompts: list[TokensPrompt] = []
-        for text, is_query in zip(
-            parsed_input.texts, parsed_input.is_query_per_text
-        ):
+        for text, is_query in zip(parsed_input.texts, parsed_input.is_query_per_text):
             max_len = 256 if is_query else 8192
             prefix_id = QUERY_PREFIX_ID if is_query else DOC_PREFIX_ID
 
@@ -191,9 +189,9 @@ class ModernColBERTIOProcessor(FactoryIOProcessor):
             if not isinstance(raw, torch.Tensor):
                 raw = torch.as_tensor(raw)
             encoded.append(
-                base64.b64encode(
-                    raw.cpu().contiguous().to(torch.float32).numpy().tobytes()
-                ).decode("ascii")
+                base64.b64encode(raw.cpu().contiguous().to(torch.float32).numpy().tobytes()).decode(
+                    "ascii"
+                )
             )
 
         if (request_meta or {}).get("batched") or len(encoded) > 1:
