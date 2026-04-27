@@ -373,11 +373,18 @@ class Dispatcher:
         if isinstance(payload, dict):
             data = payload.get("data")
             schema = None
+            labels = None
             if isinstance(data, dict) and "schema" in data:
                 schema = data.get("schema")
+            elif isinstance(data, dict) and "labels" in data:
+                labels = data.get("labels")
             elif "schema" in payload:
                 schema = payload.get("schema")
+            elif "labels" in payload:
+                labels = payload.get("labels")
             schema_size = self._schema_request_size(schema)
+            if schema_size is None and labels is not None:
+                schema_size = self._schema_request_size({"entities": labels})
 
         self._record_routing_observability(idx, affinity_state)
 
@@ -420,9 +427,7 @@ class Dispatcher:
                     text=f'{{"error": "backend unavailable: {exc}"}}',
                     content_type="application/json",
                 )
-                response.headers.update(
-                    self._build_route_headers(idx, affinity_state, schema_size)
-                )
+                response.headers.update(self._build_route_headers(idx, affinity_state, schema_size))
                 self._log_route_observability(
                     method=request.method,
                     path=request.path,
