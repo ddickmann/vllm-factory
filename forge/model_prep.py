@@ -33,7 +33,7 @@ PLUGIN_REGISTRY = {
         },
     },
     "mmbert_gliner2": {
-        "model_type": "gliner2_modernbert",
+        "model_type": "mmbert_gliner2",
         "architectures": ["GLiNER2ModernBertModel"],
         "extra_fields": {},
     },
@@ -130,10 +130,7 @@ def prepare_model_for_vllm_if_needed(
     )
     hf_config = _read_json(config_json_path) if config_json_path else {}
 
-    if (
-        hf_config.get("model_type") == "extractor"
-        and "encoder_config/config.json" in repo_files
-    ):
+    if hf_config.get("model_type") == "extractor" and "encoder_config/config.json" in repo_files:
         enc_cfg_path = _download_file(model_ref, "encoder_config/config.json")
         enc_cfg = _read_json(enc_cfg_path) if enc_cfg_path else {}
         enc_model_type = enc_cfg.get("model_type", "")
@@ -315,10 +312,14 @@ def _copy_tokenizer_files(
         tok_cfg = _read_json(tok_cfg_path)
         tc = tok_cfg.get("tokenizer_class", "")
         known_classes = {
-            "BertTokenizer", "BertTokenizerFast",
-            "PreTrainedTokenizer", "PreTrainedTokenizerFast",
-            "DebertaV2Tokenizer", "DebertaV2TokenizerFast",
-            "T5Tokenizer", "T5TokenizerFast",
+            "BertTokenizer",
+            "BertTokenizerFast",
+            "PreTrainedTokenizer",
+            "PreTrainedTokenizerFast",
+            "DebertaV2Tokenizer",
+            "DebertaV2TokenizerFast",
+            "T5Tokenizer",
+            "T5TokenizerFast",
         }
         dirty = False
         if tc and tc not in known_classes:
@@ -373,6 +374,8 @@ def prepare_mmbert_gliner2_model(
     rope_params = encoder_cfg.get("rope_parameters", {})
     full_attn_rope = rope_params.get("full_attention", {})
     sliding_attn_rope = rope_params.get("sliding_attention", {})
+    encoder_num_layers = encoder_cfg.get("num_hidden_layers", 22)
+    global_attn_every_n_layers = encoder_cfg.get("global_attn_every_n_layers", 3)
 
     vllm_config = {
         "model_type": "mmbert_gliner2",
@@ -380,7 +383,7 @@ def prepare_mmbert_gliner2_model(
         "num_hidden_layers": 0,
         "num_attention_heads": 1,
         "hidden_size": encoder_cfg.get("hidden_size", 384),
-        "encoder_num_layers": encoder_cfg.get("num_hidden_layers", 22),
+        "encoder_num_layers": encoder_num_layers,
         "encoder_num_attention_heads": encoder_cfg.get("num_attention_heads", 6),
         "intermediate_size": encoder_cfg.get("intermediate_size", 1152),
         "vocab_size": encoder_cfg.get("vocab_size", 50368),
@@ -389,9 +392,24 @@ def prepare_mmbert_gliner2_model(
         "norm_eps": encoder_cfg.get("layer_norm_eps", encoder_cfg.get("norm_eps", 1e-5)),
         "pad_token_id": encoder_cfg.get("pad_token_id", 0),
         "local_attention": encoder_cfg.get("local_attention", 128),
-        "global_attn_every_n_layers": encoder_cfg.get("global_attn_every_n_layers", 3),
+        "global_attn_every_n_layers": global_attn_every_n_layers,
         "global_rope_theta": full_attn_rope.get("rope_theta", 160000.0),
         "local_rope_theta": sliding_attn_rope.get("rope_theta", 160000.0),
+        "rope_parameters": {
+            "full_attention": {
+                "rope_theta": full_attn_rope.get("rope_theta", 160000.0),
+                "rope_type": full_attn_rope.get("rope_type", "default"),
+            },
+            "sliding_attention": {
+                "rope_theta": sliding_attn_rope.get("rope_theta", 160000.0),
+                "rope_type": sliding_attn_rope.get("rope_type", "default"),
+            },
+        },
+        "layer_types": encoder_cfg.get("layer_types")
+        or [
+            "full_attention" if i % global_attn_every_n_layers == 0 else "sliding_attention"
+            for i in range(encoder_num_layers)
+        ],
         "max_width": extractor_cfg.get("max_width", 12),
         "counting_layer": extractor_cfg.get("counting_layer", "count_lstm_v2"),
         "token_pooling": extractor_cfg.get("token_pooling", "first"),
@@ -401,8 +419,7 @@ def prepare_mmbert_gliner2_model(
         json.dump(vllm_config, f, indent=2)
 
     weight_files = [
-        f for f in repo_files
-        if f.endswith((".safetensors", ".bin", ".pt")) and "/" not in f
+        f for f in repo_files if f.endswith((".safetensors", ".bin", ".pt")) and "/" not in f
     ]
     if not weight_files:
         raise RuntimeError(f"No model weights found for '{hf_model_id}'")

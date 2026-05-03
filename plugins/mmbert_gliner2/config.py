@@ -32,6 +32,8 @@ class GLiNER2ModernBertConfig(PretrainedConfig):
         global_attn_every_n_layers: int = 3,
         global_rope_theta: float = 160000.0,
         local_rope_theta: float = 160000.0,
+        layer_types: list[str] | None = None,
+        rope_parameters: dict | None = None,
         # GLiNER2 head params
         max_width: int = 12,
         counting_layer: str = "count_lstm_v2",
@@ -54,6 +56,20 @@ class GLiNER2ModernBertConfig(PretrainedConfig):
         self.global_attn_every_n_layers = global_attn_every_n_layers
         self.global_rope_theta = global_rope_theta
         self.local_rope_theta = local_rope_theta
+        self.rope_parameters = rope_parameters or {
+            "full_attention": {
+                "rope_theta": global_rope_theta,
+                "rope_type": "default",
+            },
+            "sliding_attention": {
+                "rope_theta": local_rope_theta,
+                "rope_type": "default",
+            },
+        }
+        self.layer_types = layer_types or [
+            "full_attention" if i % global_attn_every_n_layers == 0 else "sliding_attention"
+            for i in range(encoder_num_layers)
+        ]
         self.max_width = max_width
         self.counting_layer = counting_layer
         self.token_pooling = token_pooling

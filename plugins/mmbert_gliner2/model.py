@@ -56,6 +56,22 @@ def _patch_modernbert_config(cfg):
             setattr(cfg, attr, default)
     if not hasattr(cfg, "norm_eps"):
         cfg.norm_eps = float(getattr(cfg, "layer_norm_eps", 1e-5))
+    if not hasattr(cfg, "layer_types"):
+        cfg.layer_types = [
+            "full_attention" if i % cfg.global_attn_every_n_layers == 0 else "sliding_attention"
+            for i in range(cfg.encoder_num_layers)
+        ]
+    if not hasattr(cfg, "rope_parameters"):
+        cfg.rope_parameters = {
+            "full_attention": {
+                "rope_theta": cfg.global_rope_theta,
+                "rope_type": "default",
+            },
+            "sliding_attention": {
+                "rope_theta": cfg.local_rope_theta,
+                "rope_type": "default",
+            },
+        }
     return cfg
 
 
@@ -123,7 +139,9 @@ class GLiNER2ModernBertModel(nn.Module):
         hidden_states = (
             output.last_hidden_state
             if hasattr(output, "last_hidden_state")
-            else output if isinstance(output, torch.Tensor) else output[0]
+            else output
+            if isinstance(output, torch.Tensor)
+            else output[0]
         )
         if hidden_states.dim() == 3:
             hidden_states = hidden_states.squeeze(0)
@@ -132,6 +150,7 @@ class GLiNER2ModernBertModel(nn.Module):
     def sample(self, logits: torch.Tensor, sampling_metadata):
         try:
             from vllm.sequence import SamplerOutput
+
             return SamplerOutput(outputs=[])
         except ImportError:
             return None
@@ -157,7 +176,7 @@ class GLiNER2ModernBertModel(nn.Module):
 
         for hf_name, tensor in weights:
             if hf_name.startswith(encoder_prefix):
-                local_key = hf_name[len(encoder_prefix):]
+                local_key = hf_name[len(encoder_prefix) :]
                 if local_key in vllm_backbone:
                     if "tok_embeddings.weight" in local_key:
                         target_shape = vllm_backbone[local_key].shape
@@ -179,13 +198,31 @@ class GLiNER2ModernBertModel(nn.Module):
         self.encoder.load_state_dict(backbone_state, strict=False)
         logger.info(
             "[mmBERT-GLiNER2] Loaded backbone: %s/%s keys",
-            len(backbone_state), len(vllm_backbone),
+            len(backbone_state),
+            len(vllm_backbone),
         )
 
-        self._business_pooler.load_state_dict(pooler_state, strict=False)
-        logger.info(
-            "[mmBERT-GLiNER2] Loaded pooler: %s/%s keys",
-            len(pooler_state), len(pooler_keys),
-        )
+        if pooler_state:
+            missing = pooler_keys - pooler_state.keys()
+            unexpected = pooler_state.keys() - pooler_keys
+            if missing or unexpected:
+                raise RuntimeError(
+                    "mmBERT-GLiNER2 pooler weight-load mismatch — "
+                    f"counting_layer={getattr(self.config, 'counting_layer', '?')!r} "
+                    f"missing={sorted(missing)!r} unexpected={sorted(unexpected)!r}. "
+                    "This indicates a pooler variant / checkpoint mismatch."
+                )
+            self._business_pooler.load_state_dict(pooler_state, strict=False)
+            device = next(self.encoder.parameters()).device
+            dtype = self.vllm_config.model_config.dtype
+            self._business_pooler.to(device=device, dtype=dtype)
+            logger.info(
+                "[mmBERT-GLiNER2] Loaded pooler: %s/%s keys (counting_layer=%s)",
+                len(pooler_state),
+                len(pooler_keys),
+                getattr(self.config, "counting_layer", "?"),
+            )
+        else:
+            logger.warning("[mmBERT-GLiNER2] WARNING: No pooler weights loaded!")
 
         return set(name for name, _ in self.named_parameters())
