@@ -246,7 +246,9 @@ class ModernColBERTIOProcessor(FactoryIOProcessor):
 
         indexed_outputs = [(_request_output_index(output), output) for output in model_output]
         if indexed_outputs and all(idx is not None for idx, _ in indexed_outputs):
-            ordered_outputs = [output for _, output in sorted(indexed_outputs, key=lambda item: item[0])]
+            ordered_outputs = [
+                output for _, output in sorted(indexed_outputs, key=lambda item: item[0])
+            ]
         else:
             ordered_outputs = list(model_output)
 

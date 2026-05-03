@@ -16,10 +16,10 @@ import torch.nn.functional as F
 # ============================================================================
 # CRITICAL FIX: Disable Flash Attention 2.8.3
 # ============================================================================
-os.environ['TRANSFORMERS_ATTN_IMPLEMENTATION'] = 'sdpa'
-if 'flash_attn' in sys.modules:
-    del sys.modules['flash_attn']
-sys.modules['flash_attn'] = None
+os.environ["TRANSFORMERS_ATTN_IMPLEMENTATION"] = "sdpa"
+if "flash_attn" in sys.modules:
+    del sys.modules["flash_attn"]
+sys.modules["flash_attn"] = None
 
 from vllm.config import VllmConfig  # noqa: E402
 from vllm.distributed import get_tensor_model_parallel_world_size  # noqa: E402
@@ -40,24 +40,28 @@ if _project_root not in sys.path:
 
 try:
     from kernels.fused_glu_mlp import fused_gelu_mul_dropout
+
     HAS_FUSED_GLU = True
 except ImportError:
     HAS_FUSED_GLU = False
 
 try:
     from kernels.fused_dropout_residual import fused_dropout_residual
+
     HAS_FUSED_DROPOUT = True
 except ImportError:
     HAS_FUSED_DROPOUT = False
 
 try:
     from kernels.fused_layernorm import FusedLayerNorm
+
     HAS_FUSED_LAYERNORM = True
 except ImportError:
     HAS_FUSED_LAYERNORM = False
 
 try:
     from kernels.fused_rope_global import fused_rope_global_apply
+
     HAS_FUSED_ROPE = True
 except ImportError:
     HAS_FUSED_ROPE = False
@@ -70,13 +74,13 @@ USE_FUSED_DROPOUT = True
 USE_FUSED_LAYERNORM = True
 USE_FUSED_ROPE = True
 
-print(f"\n{'='*80}")
+print(f"\n{'=' * 80}")
 print("[ModernBERT Parallel] Optimization Flags:")
 print(f"  USE_FUSED_GLU:       {USE_FUSED_GLU}")
 print(f"  USE_FUSED_DROPOUT:   {USE_FUSED_DROPOUT}")
 print(f"  USE_FUSED_LAYERNORM: {USE_FUSED_LAYERNORM}")
 print(f"  USE_FUSED_ROPE:      {USE_FUSED_ROPE}")
-print(f"{'='*80}\n")
+print(f"{'=' * 80}\n")
 
 try:
     from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
@@ -85,6 +89,7 @@ try:
         ModernBertConfig,
         ModernBertRotaryEmbedding,
     )
+
     HAS_MODERNBERT = True
 except ImportError:
     HAS_MODERNBERT = False
@@ -92,6 +97,7 @@ except ImportError:
 # ============================================================================
 # EMBEDDINGS
 # ============================================================================
+
 
 class VllmModernBertEmbeddings(nn.Module):
     def __init__(self, config: ModernBertConfig):
@@ -104,7 +110,9 @@ class VllmModernBertEmbeddings(nn.Module):
         )
 
         if USE_FUSED_LAYERNORM and HAS_FUSED_LAYERNORM:
-            self.norm = FusedLayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
+            self.norm = FusedLayerNorm(
+                config.hidden_size, eps=config.norm_eps, bias=config.norm_bias
+            )
         else:
             self.norm = nn.LayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
 
@@ -118,9 +126,11 @@ class VllmModernBertEmbeddings(nn.Module):
             hidden_states = self.drop(self.norm(hidden_states))
         return hidden_states
 
+
 # ============================================================================
 # MLP (Corrected to use ColumnParallelLinear)
 # ============================================================================
+
 
 class ParallelModernBertMLP(nn.Module):
     def __init__(self, config):
@@ -131,20 +141,16 @@ class ParallelModernBertMLP(nn.Module):
         # This ensures the matrix multiplication is actually split across GPUs.
         # vLLM automatically handles the chunking of the GLU weights.
         self.Wi = ColumnParallelLinear(
-            config.hidden_size,
-            int(config.intermediate_size) * 2,
-            bias=config.mlp_bias
+            config.hidden_size, int(config.intermediate_size) * 2, bias=config.mlp_bias
         )
 
         # Output projection
         self.Wo = RowParallelLinear(
-            config.intermediate_size,
-            config.hidden_size,
-            bias=config.mlp_bias
+            config.intermediate_size, config.hidden_size, bias=config.mlp_bias
         )
 
         self.act = nn.GELU(approximate="none")
-        self.act_fn = config.hidden_activation if hasattr(config, 'hidden_activation') else 'gelu'
+        self.act_fn = config.hidden_activation if hasattr(config, "hidden_activation") else "gelu"
         self.dropout_p = config.mlp_dropout
         self.drop = nn.Dropout(config.mlp_dropout)
 
@@ -171,9 +177,11 @@ class ParallelModernBertMLP(nn.Module):
         x, _ = self.Wo(x)
         return x
 
+
 # ============================================================================
 # ATTENTION (Corrected for Dual vLLM RoPE)
 # ============================================================================
+
 
 class ParallelModernBertAttention(nn.Module):
     def __init__(self, config, layer_id, rotary_emb_global, rotary_emb_local):
@@ -187,7 +195,7 @@ class ParallelModernBertAttention(nn.Module):
         self.head_dim = config.hidden_size // config.num_attention_heads
         self.all_head_size = self.head_dim * self.num_heads_per_partition
 
-        self.is_global = (layer_id % config.global_attn_every_n_layers == 0)
+        self.is_global = layer_id % config.global_attn_every_n_layers == 0
 
         # FIX: Use the passed vLLM Optimized RoPE instance
         self.rotary_emb = rotary_emb_global if self.is_global else rotary_emb_local
@@ -199,13 +207,18 @@ class ParallelModernBertAttention(nn.Module):
             bias=config.attention_bias,
         )
         self.Wo = RowParallelLinear(
-            config.hidden_size,
-            config.hidden_size,
-            bias=config.attention_bias
+            config.hidden_size, config.hidden_size, bias=config.attention_bias
         )
         self.out_drop = nn.Dropout(config.attention_dropout)
 
-    def forward(self, hidden_states, attention_mask, sliding_window_mask, position_ids, output_attentions=False):
+    def forward(
+        self,
+        hidden_states,
+        attention_mask,
+        sliding_window_mask,
+        position_ids,
+        output_attentions=False,
+    ):
         batch_size, seq_len, _ = hidden_states.shape
 
         # 1. QKV
@@ -220,7 +233,12 @@ class ParallelModernBertAttention(nn.Module):
         # 3. Apply HF RoPE (Standard Implementation)
         # Replaces vLLM kernel which had numerical issues with ModernBERT
         layer_type = "full_attention" if self.is_global else "sliding_attention"
-        cos, sin = self.rotary_emb(v, position_ids=position_ids, layer_type=layer_type)
+        try:
+            cos, sin = self.rotary_emb(v, position_ids=position_ids, layer_type=layer_type)
+        except TypeError:
+            # Transformers 4.x ModernBERT does not accept layer_type; the
+            # rotary instance is already configured for global/local RoPE.
+            cos, sin = self.rotary_emb(v, position_ids=position_ids)
         q, k = self._apply_rotary_pos_emb(q, k, cos, sin)
 
         # 4. SDPA
@@ -228,9 +246,12 @@ class ParallelModernBertAttention(nn.Module):
         mask = attention_mask if self.is_global else sliding_window_mask
 
         attn_output = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=mask,
+            q,
+            k,
+            v,
+            attn_mask=mask,
             dropout_p=self.out_drop.p if self.training else 0.0,
-            is_causal=False
+            is_causal=False,
         )
 
         attn_output = attn_output.transpose(1, 2).contiguous().reshape(batch_size, seq_len, -1)
@@ -259,9 +280,11 @@ class ParallelModernBertAttention(nn.Module):
         x2 = x[..., x.shape[-1] // 2 :]
         return torch.cat((-x2, x1), dim=-1)
 
+
 # ============================================================================
 # ENCODER LAYER
 # ============================================================================
+
 
 class ParallelModernBertEncoderLayer(nn.Module):
     # FIX: Accept the RoPE instances in __init__
@@ -274,17 +297,27 @@ class ParallelModernBertEncoderLayer(nn.Module):
             self.attn_norm = nn.Identity()
         else:
             if USE_FUSED_LAYERNORM and HAS_FUSED_LAYERNORM:
-                self.attn_norm = FusedLayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
+                self.attn_norm = FusedLayerNorm(
+                    config.hidden_size, eps=config.norm_eps, bias=config.norm_bias
+                )
             else:
-                self.attn_norm = nn.LayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
+                self.attn_norm = nn.LayerNorm(
+                    config.hidden_size, eps=config.norm_eps, bias=config.norm_bias
+                )
 
         if USE_FUSED_LAYERNORM and HAS_FUSED_LAYERNORM:
-            self.mlp_norm = FusedLayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
+            self.mlp_norm = FusedLayerNorm(
+                config.hidden_size, eps=config.norm_eps, bias=config.norm_bias
+            )
         else:
-            self.mlp_norm = nn.LayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
+            self.mlp_norm = nn.LayerNorm(
+                config.hidden_size, eps=config.norm_eps, bias=config.norm_bias
+            )
 
         # Pass RoPE down to attention
-        self.attn = ParallelModernBertAttention(config, layer_id, rotary_emb_global, rotary_emb_local)
+        self.attn = ParallelModernBertAttention(
+            config, layer_id, rotary_emb_global, rotary_emb_local
+        )
         self.mlp = ParallelModernBertMLP(config)
 
         self.drop = nn.Dropout(config.attention_dropout)
@@ -296,13 +329,15 @@ class ParallelModernBertEncoderLayer(nn.Module):
             attn_input,
             attention_mask=attention_mask,
             sliding_window_mask=sliding_window_mask,
-            position_ids=position_ids
+            position_ids=position_ids,
         )
         attn_output = attn_outputs[0]
 
         # Residual + Dropout
         if USE_FUSED_DROPOUT and HAS_FUSED_DROPOUT:
-            hidden_states = fused_dropout_residual(attn_output, hidden_states, self.config.attention_dropout, self.training)
+            hidden_states = fused_dropout_residual(
+                attn_output, hidden_states, self.config.attention_dropout, self.training
+            )
         else:
             hidden_states = hidden_states + self.drop(attn_output)
 
@@ -311,15 +346,19 @@ class ParallelModernBertEncoderLayer(nn.Module):
 
         # Residual + Dropout
         if USE_FUSED_DROPOUT and HAS_FUSED_DROPOUT:
-            hidden_states = fused_dropout_residual(mlp_output, hidden_states, self.config.attention_dropout, self.training)
+            hidden_states = fused_dropout_residual(
+                mlp_output, hidden_states, self.config.attention_dropout, self.training
+            )
         else:
             hidden_states = hidden_states + self.drop(mlp_output)
 
         return (hidden_states,)
 
+
 # ============================================================================
 # MODEL
 # ============================================================================
+
 
 class ModernBertModel(nn.Module):
     def __init__(self, vllm_config: VllmConfig, prefix: str = ""):
@@ -333,8 +372,8 @@ class ModernBertModel(nn.Module):
         self.prefix = prefix
 
         # Force SDPA
-        config._attn_implementation = 'sdpa'
-        if hasattr(config, 'use_flash_attention_2'):
+        config._attn_implementation = "sdpa"
+        if hasattr(config, "use_flash_attention_2"):
             config.use_flash_attention_2 = False
 
         rope_parameters = getattr(config, "rope_parameters", None)
@@ -363,24 +402,30 @@ class ModernBertModel(nn.Module):
         self.rope_local = ModernBertRotaryEmbedding(conf_local)
 
         # Pass RoPE instances down to layers
-        self.layers = nn.ModuleList([
-            ParallelModernBertEncoderLayer(config, i, self.rope_global, self.rope_local)
-            for i in range(config.num_hidden_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                ParallelModernBertEncoderLayer(config, i, self.rope_global, self.rope_local)
+                for i in range(config.num_hidden_layers)
+            ]
+        )
 
         if USE_FUSED_LAYERNORM and HAS_FUSED_LAYERNORM:
-            self.final_norm = FusedLayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
+            self.final_norm = FusedLayerNorm(
+                config.hidden_size, eps=config.norm_eps, bias=config.norm_bias
+            )
         else:
-            self.final_norm = nn.LayerNorm(config.hidden_size, eps=config.norm_eps, bias=config.norm_bias)
+            self.final_norm = nn.LayerNorm(
+                config.hidden_size, eps=config.norm_eps, bias=config.norm_bias
+            )
 
         self.gradient_checkpointing = False
 
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print("[ModernBERT Parallel] vLLM Optimized Layers Loaded")
         print("  ✓ Dual HF RoPE Implementation (Standard)")
         print("  ✓ ColumnParallelLinear (MLP Input)")
         print("  ✓ Block-diagonal mask (cross-sequence isolation)")
-        print(f"{'='*80}\n")
+        print(f"{'=' * 80}\n")
 
     def forward(
         self,
@@ -388,7 +433,7 @@ class ModernBertModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-        **kwargs
+        **kwargs,
     ) -> Union[tuple[torch.Tensor, ...], BaseModelOutput, torch.Tensor]:
 
         # vLLM Flat Input Handling
@@ -396,7 +441,7 @@ class ModernBertModel(nn.Module):
             input_ids = input_ids.unsqueeze(0)
 
         if inputs_embeds is not None and inputs_embeds.dim() == 2:
-             inputs_embeds = inputs_embeds.unsqueeze(0)
+            inputs_embeds = inputs_embeds.unsqueeze(0)
 
         # Batch/Seq checks
         if input_ids is not None:
@@ -415,7 +460,7 @@ class ModernBertModel(nn.Module):
             token_mask = torch.ones((batch_size, seq_len), device=device, dtype=torch.bool)
 
         if position_ids is None:
-             position_ids = torch.arange(seq_len, device=device).unsqueeze(0)
+            position_ids = torch.arange(seq_len, device=device).unsqueeze(0)
 
         # Build block-diagonal mask from position_ids to prevent cross-sequence
         # attention when vLLM concatenates multiple sequences into one flat tensor.
@@ -435,7 +480,7 @@ class ModernBertModel(nn.Module):
                 hidden_states,
                 attention_mask=attention_mask_4d,
                 sliding_window_mask=sliding_window_mask,
-                position_ids=position_ids
+                position_ids=position_ids,
             )
             hidden_states = layer_outputs[0]
 
@@ -493,7 +538,12 @@ class ModernBertModel(nn.Module):
         # Sliding window mask: combine block-diagonal with distance constraint
         rows = torch.arange(seq_len, device=attention_mask.device).unsqueeze(0)
         distance = torch.abs(rows - rows.T)
-        window_mask = (distance <= self.config.local_attention // 2).unsqueeze(0).unsqueeze(0).to(attention_mask.device)
+        window_mask = (
+            (distance <= self.config.local_attention // 2)
+            .unsqueeze(0)
+            .unsqueeze(0)
+            .to(attention_mask.device)
+        )
         sliding_window_mask = global_attention_mask.masked_fill(
             window_mask.logical_not(), torch.finfo(dtype).min
         )
@@ -505,10 +555,11 @@ class ModernBertModel(nn.Module):
         for name, loaded_weight in weights:
             param_name = name
             if self.prefix and name.startswith(f"{self.prefix}."):
-                param_name = name[len(self.prefix)+1:]
+                param_name = name[len(self.prefix) + 1 :]
             if param_name in params_dict:
                 param = params_dict[param_name]
                 loader = getattr(param, "weight_loader", default_weight_loader)
                 loader(param, loaded_weight)
+
 
 __all__ = ["ModernBertModel"]
